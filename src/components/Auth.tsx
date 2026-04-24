@@ -1,95 +1,82 @@
 import React, { useState } from 'react';
-import supabase from '../lib/supabase';
+import { supabase } from '../lib/supabase';
 
 const Auth = () => {
+  const [loading, setLoading] = useState(false);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [loading, setLoading] = useState(false);
-  const [isSignUp, setIsSignUp] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [isSignUp, setIsSignUp] = useState(false);
 
   const handleAuth = async (e: React.FormEvent) => {
     e.preventDefault();
-    try {
-      setLoading(true);
-      setError(null);
-      if (isSignUp) {
-        const { error } = await supabase.auth.signUp({ email, password });
-        if (error) throw error;
-        alert('Signup successful! Check your email to verify.');
-      } else {
-        const { error } = await supabase.auth.signInWithPassword({ email, password });
-        if (error) throw error;
-        alert('Login successful! Welcome to HeartSync.');
-      }
-    } catch (err: any) {
-      setError(err.message);
-    } finally {
-      setLoading(false);
-    }
+    setLoading(true);
+    const { error } = isSignUp 
+      ? await supabase.auth.signUp({ email, password })
+      : await supabase.auth.signInWithPassword({ email, password });
+
+    if (error) alert(error.message);
+    setLoading(false);
   };
 
   return (
-    <div className="flex flex-col items-center justify-center min-h-screen bg-gradient-to-br from-gray-950 via-purple-950 to-gray-950 text-white font-sans w-full px-4">
-      
-      {/* Premium Glassmorphism Card */}
-      <div className="w-full max-w-md p-10 bg-white/5 backdrop-blur-xl border border-white/10 rounded-3xl shadow-[0_8px_32px_0_rgba(0,0,0,0.5)]">
-        
+    <div className="min-h-screen w-full flex items-center justify-center p-4 relative overflow-hidden bg-rose-50">
+      {/* Floating Hearts for Auth Page */}
+      <div className="absolute inset-0 pointer-events-none opacity-30">
+         {[...Array(10)].map((_, i) => (
+           <div key={i} className="absolute animate-bounce" style={{
+             left: `${Math.random() * 100}%`,
+             top: `${Math.random() * 100}%`,
+             animationDelay: `${Math.random() * 2}s`
+           }}>❤️</div>
+         ))}
+      </div>
+
+      <div className="glass-card w-full max-w-md p-10 rounded-[40px] shadow-2xl relative z-10 border-2 border-rose-100">
         <div className="text-center mb-8">
-          <h2 className="text-4xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-rose-400 to-pink-500 tracking-tight">
-            HeartSync
-          </h2>
-          <p className="text-gray-400 mt-2 text-sm">
-            {isSignUp ? 'Begin your exclusive journey' : 'Welcome back to your space'}
+          <h1 className="text-5xl font-love text-rose-500 mb-2">HeartSync</h1>
+          <p className="text-rose-400 font-bold uppercase tracking-widest text-sm">
+            {isSignUp ? "Create Your Bond" : "Welcome Back, Lover"}
           </p>
         </div>
 
-        <form onSubmit={handleAuth} className="space-y-5">
+        <form onSubmit={handleAuth} className="space-y-6">
           <div>
             <input
               type="email"
               placeholder="Your Email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              className="w-full p-4 rounded-xl bg-black/40 border border-white/10 text-white placeholder-gray-500 focus:outline-none focus:border-rose-500/50 focus:ring-1 focus:ring-rose-500/50 transition-all duration-300"
+              className="w-full bg-white/50 border-2 border-rose-100 p-4 rounded-2xl focus:outline-none focus:border-rose-400 text-slate-700 transition-all shadow-inner"
               required
             />
           </div>
           <div>
             <input
               type="password"
-              placeholder="Your Password"
+              placeholder="Secret Password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              className="w-full p-4 rounded-xl bg-black/40 border border-white/10 text-white placeholder-gray-500 focus:outline-none focus:border-rose-500/50 focus:ring-1 focus:ring-rose-500/50 transition-all duration-300"
+              className="w-full bg-white/50 border-2 border-rose-100 p-4 rounded-2xl focus:outline-none focus:border-rose-400 text-slate-700 transition-all shadow-inner"
               required
             />
           </div>
-          
+
           <button
-            type="submit"
             disabled={loading}
-            className="w-full bg-gradient-to-r from-rose-600 to-pink-600 hover:from-rose-500 hover:to-pink-500 text-white font-bold py-4 px-4 rounded-xl shadow-lg shadow-rose-600/20 transform transition-all duration-300 active:scale-[0.98] disabled:opacity-50 mt-4"
+            className="w-full bg-gradient-to-r from-rose-400 to-pink-500 text-white font-bold py-4 rounded-2xl shadow-lg hover:shadow-rose-200 hover:scale-[1.02] transition-all active:scale-95"
           >
-            {loading ? 'Processing...' : (isSignUp ? 'Create Connection' : 'Log In')}
+            {loading ? "Magic is happening..." : isSignUp ? "Sign Up 💞" : "Login ❤️"}
           </button>
         </form>
 
         <div className="mt-8 text-center">
           <button
             onClick={() => setIsSignUp(!isSignUp)}
-            className="text-gray-400 hover:text-rose-300 transition-colors text-sm font-medium"
-            type="button"
+            className="text-rose-500 font-semibold hover:underline decoration-rose-300"
           >
-            {isSignUp ? 'Already paired? Log In here' : "Need a connection? Sign Up"}
+            {isSignUp ? "Already have a sync? Login" : "New here? Start your HeartSync"}
           </button>
         </div>
-
-        {error && (
-          <div className="mt-6 p-3 bg-red-500/10 border border-red-500/20 rounded-lg">
-            <p className="text-center text-red-400 text-sm">{error}</p>
-          </div>
-        )}
       </div>
     </div>
   );
