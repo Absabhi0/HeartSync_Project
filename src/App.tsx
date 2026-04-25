@@ -1,1501 +1,957 @@
-// ============================================================
-// HeartSync · App.tsx
-// Unified React + TypeScript + Tailwind v4 + Supabase
-// All components live here by design.
-// ============================================================
-
-import { useEffect, useMemo, useRef, useState } from 'react';
-import {
-  BrowserRouter,
-  Routes,
-  Route,
-  Navigate,
-  useNavigate,
-  useLocation,
-} from 'react-router-dom';
+import { useState, useEffect, useRef, useCallback } from 'react';
+import { BrowserRouter, Routes, Route, useNavigate } from 'react-router-dom';
 import { supabase } from './lib/supabase';
 
-// ------------------------------------------------------------
-// Types
-// ------------------------------------------------------------
-type Profile = {
+/* ============================================================
+   TYPES
+   ============================================================ */
+interface Profile {
   id: string;
+  username: string;
+  first_name: string;
+  last_name: string;
+  dob: string;
+  mood: string;
   partner_id: string | null;
-  invite_code: string | null;
-  mood: string | null;
+  invite_code: string;
   sync_start_date: string | null;
-  username: string | null;
-  first_name: string | null;
-  last_name: string | null;
-  dob: string | null;
-};
-
-type Message = {
+}
+interface Message {
   id: string;
-  created_at: string;
   content: string;
   sender_id: string;
-};
-
-type BucketItem = {
-  id: string;
   created_at: string;
+}
+interface BucketItem {
+  id: string;
   title: string;
   is_completed: boolean;
   author_id: string;
-};
+}
 
-// ------------------------------------------------------------
-// Mood Options
-// ------------------------------------------------------------
-const MOODS = [
-  { emoji: '😊', label: 'Happy' },
-  { emoji: '🥰', label: 'In Love' },
-  { emoji: '😌', label: 'Calm' },
-  { emoji: '🤗', label: 'Missing You' },
-  { emoji: '😴', label: 'Sleepy' },
-  { emoji: '🥺', label: 'Needy' },
-  { emoji: '🔥', label: 'Excited' },
-  { emoji: '😢', label: 'Sad' },
-];
-
-// ============================================================
-// Background · Floating Hearts
-// ============================================================
+/* ============================================================
+   BACKGROUND — Floating Hearts
+   ============================================================ */
 function Background() {
-  const hearts = useMemo(() => {
-    const shapes = ['❤', '💕', '💖', '💗', '💘', '🌸', '✿'];
-    return Array.from({ length: 22 }).map((_, i) => ({
-      id: i,
-      left: Math.random() * 100,
-      size: 14 + Math.random() * 30,
-      dur: 14 + Math.random() * 16,
-      delay: Math.random() * 10,
-      shape: shapes[Math.floor(Math.random() * shapes.length)],
-    }));
-  }, []);
-
+  const hearts = ['💗', '💕', '💖', '🩷', '💓', '💝', '❤️', '💞'];
+  const items = Array.from({ length: 14 }, (_, i) => ({
+    id: i,
+    emoji: hearts[i % hearts.length],
+    left: `${(i * 7.3 + 3) % 100}%`,
+    delay: `${(i * 1.7) % 10}s`,
+    duration: `${10 + (i * 1.3) % 10}s`,
+    size: `${1 + (i % 3) * 0.4}rem`,
+  }));
   return (
-    <div className="heart-bg" aria-hidden="true">
-      {hearts.map((h) => (
-        <span
+    <div className="heart-bg">
+      {items.map(h => (
+        <div
           key={h.id}
           className="floating-heart"
           style={{
-            left: `${h.left}%`,
-            fontSize: `${h.size}px`,
-            animationDuration: `${h.dur}s`,
-            animationDelay: `${h.delay}s`,
+            left: h.left,
+            animationDelay: h.delay,
+            animationDuration: h.duration,
+            fontSize: h.size,
           }}
         >
-          {h.shape}
-        </span>
+          {h.emoji}
+        </div>
       ))}
     </div>
   );
 }
 
-// ============================================================
-// Logo Mark
-// ============================================================
-function LogoMark({ size = 40 }: { size?: number }) {
+/* ============================================================
+   AUTH — Sliding Overlay Design
+   ============================================================ */
+function Auth() {
+  // 'login' = overlay on right (sign-in form visible)
+  // 'signup' = overlay on left (sign-up form visible)
+  const [mode, setMode] = useState<'login' | 'signup'>('login');
+
+  // Shared form state
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  // Sign-up only
+  const [username, setUsername]     = useState('');
+  const [firstName, setFirstName]   = useState('');
+  const [lastName, setLastName]     = useState('');
+  const [dob, setDob]               = useState('');
+  const [agreeTerms, setAgreeTerms] = useState(false);
+
+  const [loading, setLoading] = useState(false);
+  const [error, setError]     = useState('');
+  const [info, setInfo]       = useState('');
+
+  const switchMode = (next: 'login' | 'signup') => {
+    setMode(next);
+    setError('');
+    setInfo('');
+  };
+
+  const handleLogin = async () => {
+    setError(''); setLoading(true);
+    const { error: e } = await supabase.auth.signInWithPassword({ email, password });
+    if (e) setError(e.message);
+    setLoading(false);
+  };
+
+  const handleSignUp = async () => {
+    if (!agreeTerms) { setError('Please agree to the terms.'); return; }
+    setError(''); setLoading(true);
+    const { data, error: e } = await supabase.auth.signUp({ email, password });
+    if (e) { setError(e.message); setLoading(false); return; }
+    if (data.user) {
+      const inviteCode = Math.random().toString(36).substring(2, 10).toUpperCase();
+      await supabase.from('profiles').insert({
+        id: data.user.id,
+        username, first_name: firstName, last_name: lastName, dob,
+        invite_code: inviteCode, mood: '😊 Happy',
+      });
+      setInfo('Check your email to confirm your account! 💌');
+    }
+    setLoading(false);
+  };
+
+  const handleGoogle = async () => {
+    await supabase.auth.signInWithOAuth({ provider: 'google' });
+  };
+
+  // On mobile (<600px) the overlay hides and React controls which panel shows
+  const isSignIn = mode === 'login';
+
   return (
-    <div
-      className="relative flex items-center justify-center rounded-full cute-shadow"
-      style={{
-        width: size,
-        height: size,
-        background: 'linear-gradient(135deg, #ff9ebd 0%, #f43f72 60%, #e11d5a 100%)',
-      }}
-    >
-      <span style={{ fontSize: size * 0.55 }}>💞</span>
-      <span className="pulse-ring" />
+    <div className="auth-page">
+      {/* Floating particles */}
+      {Array.from({ length: 10 }, (_, i) => (
+        <div
+          key={i}
+          className="particle"
+          style={{
+            position: 'absolute',
+            left: `${(i * 9.5 + 4) % 96}%`,
+            bottom: 0,
+            animationDuration: `${7 + (i * 0.8) % 7}s`,
+            animationDelay: `${(i * 0.7) % 5}s`,
+            fontSize: '1rem',
+            opacity: 0,
+            animation: `floatUp ${7 + (i * 0.8) % 7}s ${(i * 0.7) % 5}s linear infinite`,
+            pointerEvents: 'none',
+          }}
+        >
+          🌸
+        </div>
+      ))}
+
+      <div className="auth-card">
+        {/* ── SIGN IN PANEL (left half) ── */}
+        <div
+          className={`auth-panel auth-panel--signin ${!isSignIn ? 'covered' : ''} ${
+            // mobile: hide if not current mode
+            !isSignIn ? 'mobile-hidden' : ''
+          }`}
+        >
+          <div className="auth-logo shimmer-text">HeartSync</div>
+          <p className="auth-subtitle">Welcome back, love 💕</p>
+
+          <div className="w-full space-y-3">
+            <input
+              className="input-love"
+              type="email"
+              placeholder="Email 📧"
+              value={email}
+              onChange={e => setEmail(e.target.value)}
+            />
+            <input
+              className="input-love"
+              type="password"
+              placeholder="Password 🔒"
+              value={password}
+              onChange={e => setPassword(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && handleLogin()}
+            />
+          </div>
+
+          {error  && isSignIn && <p className="text-red-400 text-xs mt-2 text-center animate-pulse">{error}</p>}
+          {info   && isSignIn && <p className="text-green-500 text-xs mt-2 text-center">{info}</p>}
+
+          <button
+            onClick={handleLogin}
+            disabled={loading}
+            className="w-full mt-4 py-2.5 rounded-full bg-gradient-to-r from-rose-500 to-pink-500 text-white font-bold text-sm shadow-lg hover:scale-[1.03] btn-press transition-all duration-200 disabled:opacity-60"
+          >
+            {loading ? '✨ Loading...' : '💗 Sign In'}
+          </button>
+
+          <div className="flex items-center gap-3 my-3 w-full">
+            <div className="flex-1 h-px bg-rose-100" />
+            <span className="text-rose-300 text-xs">or</span>
+            <div className="flex-1 h-px bg-rose-100" />
+          </div>
+
+          <button
+            onClick={handleGoogle}
+            className="w-full py-2.5 rounded-full border-2 border-rose-200 bg-white text-rose-600 font-semibold text-sm flex items-center justify-center gap-2 hover:border-rose-400 hover:bg-rose-50 btn-press transition-all duration-200"
+          >
+            <svg className="w-4 h-4" viewBox="0 0 48 48">
+              <path fill="#EA4335" d="M24 9.5c3.3 0 6.1 1.1 8.4 3.3l6.3-6.3C34.7 2.8 29.7.5 24 .5 14.7.5 6.9 6.1 3.3 14l7.4 5.8C12.5 13.2 17.8 9.5 24 9.5z"/>
+              <path fill="#4285F4" d="M46.5 24.5c0-1.6-.1-3.1-.4-4.5H24v8.5h12.7c-.6 3-2.3 5.5-4.8 7.2l7.4 5.8c4.3-4 6.8-9.9 7.2-17z"/>
+              <path fill="#FBBC05" d="M10.7 28.2A14.5 14.5 0 0 1 9.5 24c0-1.5.3-2.9.7-4.2L2.8 14C1 17.1 0 20.4 0 24s1 6.9 2.8 10l7.9-5.8z"/>
+              <path fill="#34A853" d="M24 47.5c5.7 0 10.5-1.9 14-5.1l-7.4-5.8c-2 1.4-4.6 2.2-6.6 2.2-6.2 0-11.5-3.7-13.3-9.1L2.8 34c3.6 7.9 11.4 13.5 21.2 13.5z"/>
+            </svg>
+            Google
+          </button>
+
+          {/* Mobile-only toggle */}
+          <p className="mt-4 text-rose-300 text-xs sm:hidden">
+            Don&apos;t have an account?{' '}
+            <button onClick={() => switchMode('signup')} className="text-rose-500 font-bold underline">Sign Up</button>
+          </p>
+        </div>
+
+        {/* ── SIGN UP PANEL (right half) ── */}
+        <div
+          className={`auth-panel auth-panel--signup ${isSignIn ? 'covered' : ''} ${
+            isSignIn ? 'mobile-hidden' : ''
+          }`}
+        >
+          <div className="auth-logo shimmer-text">HeartSync</div>
+          <p className="auth-subtitle">Start your love story 🌹</p>
+
+          <div className="w-full space-y-2.5">
+            <input
+              className="input-love"
+              placeholder="Username 💌"
+              value={username}
+              onChange={e => setUsername(e.target.value)}
+            />
+            <div className="flex gap-2">
+              <input
+                className="input-love"
+                placeholder="First Name"
+                value={firstName}
+                onChange={e => setFirstName(e.target.value)}
+              />
+              <input
+                className="input-love"
+                placeholder="Last Name"
+                value={lastName}
+                onChange={e => setLastName(e.target.value)}
+              />
+            </div>
+            <input
+              className="input-love"
+              type="date"
+              value={dob}
+              onChange={e => setDob(e.target.value)}
+            />
+            <input
+              className="input-love"
+              type="email"
+              placeholder="Email 📧"
+              value={email}
+              onChange={e => setEmail(e.target.value)}
+            />
+            <input
+              className="input-love"
+              type="password"
+              placeholder="Password 🔒"
+              value={password}
+              onChange={e => setPassword(e.target.value)}
+            />
+            <label className="flex items-center gap-2 text-rose-400 text-xs cursor-pointer pl-1">
+              <input
+                type="checkbox"
+                checked={agreeTerms}
+                onChange={e => setAgreeTerms(e.target.checked)}
+                className="accent-rose-500"
+              />
+              I agree to the Terms &amp; Conditions 💝
+            </label>
+          </div>
+
+          {error && !isSignIn && <p className="text-red-400 text-xs mt-2 text-center animate-pulse">{error}</p>}
+          {info  && !isSignIn && <p className="text-green-500 text-xs mt-2 text-center">{info}</p>}
+
+          <button
+            onClick={handleSignUp}
+            disabled={loading}
+            className="w-full mt-3 py-2.5 rounded-full bg-gradient-to-r from-rose-500 to-pink-500 text-white font-bold text-sm shadow-lg hover:scale-[1.03] btn-press transition-all duration-200 disabled:opacity-60"
+          >
+            {loading ? '✨ Loading...' : '🌹 Create Account'}
+          </button>
+
+          {/* Mobile-only toggle */}
+          <p className="mt-4 text-rose-300 text-xs sm:hidden">
+            Already have an account?{' '}
+            <button onClick={() => switchMode('login')} className="text-rose-500 font-bold underline">Sign In</button>
+          </p>
+        </div>
+
+        {/* ── SLIDING OVERLAY PANEL ── */}
+        <div className={`auth-overlay ${mode === 'signup' ? 'overlay-left' : ''}`}>
+          {mode === 'login' ? (
+            // Overlay is on the right → prompts to switch to sign up
+            <>
+              <span className="auth-overlay-heart">💗</span>
+              <p className="auth-overlay-title">Hello, Friend!</p>
+              <p className="auth-overlay-text">
+                Start your journey with us and find your perfect sync 🌹
+              </p>
+              <button className="auth-overlay-btn" onClick={() => switchMode('signup')}>
+                Sign Up
+              </button>
+            </>
+          ) : (
+            // Overlay is on the left → prompts to switch to sign in
+            <>
+              <span className="auth-overlay-heart">💕</span>
+              <p className="auth-overlay-title">Welcome Back!</p>
+              <p className="auth-overlay-text">
+                Please login to your account to continue your love story 💌
+              </p>
+              <button className="auth-overlay-btn" onClick={() => switchMode('login')}>
+                Sign In
+              </button>
+            </>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
 
-// ============================================================
-// Navbar · Global top navigation
-// ============================================================
-function Navbar({
-  profile,
-  onOpenSettings,
-}: {
-  profile: Profile | null;
-  onOpenSettings: () => void;
-}) {
+/* ============================================================
+   SETTINGS MODAL
+   ============================================================ */
+function SettingsModal({ profile, onClose }: { profile: Profile | null; onClose: () => void }) {
   const navigate = useNavigate();
-  const location = useLocation();
-  const onChat = location.pathname.startsWith('/chat');
 
-  const displayName =
-    profile?.username ||
-    profile?.first_name ||
-    (profile?.id ? `user_${profile.id.slice(0, 6)}` : '...');
-
-  return (
-    <header
-      className="navbar-safe fixed top-0 left-0 right-0 z-40 glass-strong soft-border"
-      style={{ borderTop: 0, borderLeft: 0, borderRight: 0 }}
-    >
-      <div className="max-w-7xl mx-auto px-4 md:px-6 h-16 flex items-center justify-between">
-        {/* Brand */}
-        <button
-          onClick={() => navigate('/dashboard')}
-          className="flex items-center gap-3 hover-jelly"
-          aria-label="HeartSync home"
-        >
-          <LogoMark size={38} />
-          <span className="font-love text-2xl md:text-3xl gradient-text leading-none">
-            HeartSync
-          </span>
-        </button>
-
-        {/* Right cluster */}
-        <nav className="flex items-center gap-2 md:gap-3">
-          <button
-            onClick={() => navigate(onChat ? '/dashboard' : '/chat')}
-            className="btn-press hover-jelly flex items-center gap-2 px-4 md:px-5 py-2.5 rounded-full text-white font-semibold text-sm md:text-base cute-shadow"
-            style={{
-              background: 'linear-gradient(135deg, #f43f72 0%, #e11d5a 100%)',
-            }}
-          >
-            <span>{onChat ? '🏠' : '💬'}</span>
-            <span className="hidden sm:inline">{onChat ? 'Dashboard' : 'Chat'}</span>
-          </button>
-
-          <div className="hidden md:flex items-center gap-2 px-4 py-2 rounded-full glass-card soft-border">
-            <span className="w-2 h-2 rounded-full bg-rose-500 animate-pulse" />
-            <span className="text-sm font-semibold text-rose-700 max-w-[160px] truncate">
-              @{displayName}
-            </span>
-          </div>
-
-          <button
-            onClick={onOpenSettings}
-            aria-label="Open settings"
-            className="btn-press hover-jelly w-11 h-11 rounded-full glass-card soft-border flex items-center justify-center text-rose-600 hover:text-rose-700"
-          >
-            <GearIcon />
-          </button>
-        </nav>
-      </div>
-
-      {/* Mobile username line */}
-      <div className="md:hidden px-4 pb-2 -mt-1 flex items-center gap-2">
-        <span className="w-2 h-2 rounded-full bg-rose-500 animate-pulse" />
-        <span className="text-xs font-semibold text-rose-700">@{displayName}</span>
-      </div>
-    </header>
-  );
-}
-
-function GearIcon() {
-  return (
-    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <circle cx="12" cy="12" r="3" />
-      <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
-    </svg>
-  );
-}
-
-// ============================================================
-// Settings Modal · contains Logout
-// ============================================================
-function SettingsModal({
-  open,
-  onClose,
-  profile,
-  onProfileChange,
-}: {
-  open: boolean;
-  onClose: () => void;
-  profile: Profile | null;
-  onProfileChange: (p: Profile) => void;
-}) {
-  const [username, setUsername] = useState(profile?.username || '');
-  const [saving, setSaving] = useState(false);
-  const [message, setMessage] = useState('');
-
-  useEffect(() => {
-    setUsername(profile?.username || '');
-  }, [profile?.username]);
-
-  if (!open) return null;
-
-  const saveUsername = async () => {
-    if (!profile) return;
-    setSaving(true);
-    setMessage('');
-    const { data, error } = await supabase
-      .from('profiles')
-      .update({ username })
-      .eq('id', profile.id)
-      .select()
-      .single();
-    setSaving(false);
-    if (error) {
-      setMessage(`Save failed: ${error.message}`);
-      return;
-    }
-    if (data) onProfileChange(data as Profile);
-    setMessage('✨ Saved!');
-    setTimeout(() => setMessage(''), 1800);
-  };
-
-  const logout = async () => {
+  const handleLogout = async () => {
     await supabase.auth.signOut();
+    navigate('/');
     onClose();
   };
 
   return (
-    <div className="modal-backdrop" onClick={onClose}>
+    <div className="modal-overlay" onClick={onClose}>
       <div
-        className="glass-strong cute-shadow-lg soft-border rounded-[28px] w-[92vw] max-w-md p-7 md:p-8 animate-fade-up"
-        onClick={(e) => e.stopPropagation()}
-        role="dialog"
-        aria-modal="true"
+        className="glass-card cute-shadow rounded-[28px] w-full max-w-sm mx-4 p-7 modal-card"
+        onClick={e => e.stopPropagation()}
       >
-        <div className="flex items-center justify-between mb-5">
-          <div className="flex items-center gap-3">
-            <LogoMark size={36} />
-            <h2 className="font-love text-3xl gradient-text">Settings</h2>
-          </div>
-          <button
-            aria-label="Close"
-            onClick={onClose}
-            className="w-9 h-9 rounded-full glass-card soft-border flex items-center justify-center text-rose-600 hover-jelly"
-          >
-            ✕
-          </button>
+        <div className="text-center mb-6">
+          <div className="text-5xl mb-2">⚙️</div>
+          <h2 className="text-2xl font-bold text-rose-600" style={{ fontFamily: 'var(--font-love)' }}>
+            Settings
+          </h2>
         </div>
 
-        <section className="space-y-4">
-          <div>
-            <label className="block text-sm font-semibold text-rose-700 mb-1.5">
-              Username
-            </label>
-            <input
-              className="rose-input"
-              value={username}
-              onChange={(e) => setUsername(e.target.value)}
-              placeholder="your_lovely_name"
-            />
-          </div>
-
-          <button
-            onClick={saveUsername}
-            disabled={saving}
-            className="btn-press hover-jelly w-full py-3 rounded-2xl text-white font-bold cute-shadow"
-            style={{ background: 'linear-gradient(135deg, #f43f72, #e11d5a)' }}
-          >
-            {saving ? 'Saving…' : 'Save Profile'}
-          </button>
-          {message && (
-            <p className="text-center text-sm text-rose-700 font-semibold">{message}</p>
-          )}
-
-          <div className="border-t border-rose-100 my-5" />
-
-          <div className="rounded-2xl p-4 glass-card soft-border">
-            <p className="text-sm text-rose-800 font-semibold mb-1">Account</p>
-            <p className="text-xs text-rose-500 break-all">
-              ID: <span className="font-mono">{profile?.id || '—'}</span>
-            </p>
-            {profile?.invite_code && (
-              <p className="text-xs text-rose-500 mt-1">
-                Invite code: <span className="font-mono font-bold">{profile.invite_code}</span>
+        {profile && (
+          <div className="bg-rose-50 rounded-2xl p-4 mb-5 space-y-1">
+            <p className="text-rose-700 font-bold text-lg">@{profile.username}</p>
+            <p className="text-rose-400 text-sm">{profile.first_name} {profile.last_name}</p>
+            {profile.dob && (
+              <p className="text-rose-300 text-xs">
+                🎂 {new Date(profile.dob).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}
               </p>
             )}
-          </div>
-
-          <button
-            onClick={logout}
-            className="btn-press hover-jelly w-full py-3 rounded-2xl font-bold text-rose-700 border-2 border-rose-300 bg-white/80 hover:bg-rose-50 transition"
-          >
-            🚪 Log Out
-          </button>
-        </section>
-      </div>
-    </div>
-  );
-}
-
-// ============================================================
-// Hugging Hearts · Post-Sync Overlay
-// ============================================================
-function HuggingHearts({ onDone }: { onDone: () => void }) {
-  useEffect(() => {
-    const t = setTimeout(onDone, 3400);
-    return () => clearTimeout(t);
-  }, [onDone]);
-
-  const sparkles = Array.from({ length: 10 }).map((_, i) => ({
-    id: i,
-    left: 30 + Math.random() * 40,
-    top: 30 + Math.random() * 30,
-    delay: 1.2 + Math.random() * 1.2,
-    emoji: ['✨', '💫', '💖', '🌟'][i % 4],
-  }));
-
-  return (
-    <div className="hug-overlay" role="dialog" aria-label="Partner linked">
-      <div className="relative w-full h-full flex items-center justify-center">
-        <span className="hug-heart left">💖</span>
-        <span className="hug-heart right">💗</span>
-        {sparkles.map((s) => (
-          <span
-            key={s.id}
-            className="hug-sparkle"
-            style={{
-              left: `${s.left}%`,
-              top: `${s.top}%`,
-              animationDelay: `${s.delay}s`,
-            }}
-          >
-            {s.emoji}
-          </span>
-        ))}
-        <div className="hug-caption">
-          You&apos;re linked! <br />
-          <span style={{ fontSize: 22, fontFamily: 'var(--font-main)', fontWeight: 600 }}>
-            Two hearts, one sync 💞
-          </span>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ============================================================
-// Auth · Sliding Door
-// ============================================================
-function Auth() {
-  const [mode, setMode] = useState<'login' | 'signup'>('login');
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
-
-  // Login fields
-  const [lEmail, setLEmail] = useState('');
-  const [lPassword, setLPassword] = useState('');
-
-  // Signup fields
-  const [username, setUsername] = useState('');
-  const [firstName, setFirstName] = useState('');
-  const [lastName, setLastName] = useState('');
-  const [dob, setDob] = useState('');
-  const [sEmail, setSEmail] = useState('');
-  const [sPassword, setSPassword] = useState('');
-  const [agree, setAgree] = useState(false);
-
-  const handleLogin = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setError('');
-    setLoading(true);
-    const { error } = await supabase.auth.signInWithPassword({
-      email: lEmail,
-      password: lPassword,
-    });
-    setLoading(false);
-    if (error) setError(error.message);
-  };
-
-  const handleSignup = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setError('');
-    if (!agree) {
-      setError('Please accept the Terms to continue.');
-      return;
-    }
-    setLoading(true);
-    const { data, error } = await supabase.auth.signUp({
-      email: sEmail,
-      password: sPassword,
-      options: {
-        data: {
-          username,
-          first_name: firstName,
-          last_name: lastName,
-          dob,
-        },
-      },
-    });
-    if (!error && data.user) {
-      // Seed profile row (safe if RLS off; ignored if exists via on conflict trigger)
-      await supabase.from('profiles').upsert(
-        {
-          id: data.user.id,
-          username,
-          first_name: firstName,
-          last_name: lastName,
-          dob: dob || null,
-        },
-        { onConflict: 'id' },
-      );
-    }
-    setLoading(false);
-    if (error) setError(error.message);
-  };
-
-  const handleGoogle = async () => {
-    setError('');
-    const { error } = await supabase.auth.signInWithOAuth({
-      provider: 'google',
-      options: { redirectTo: window.location.origin },
-    });
-    if (error) setError(error.message);
-  };
-
-  return (
-    <div className="fixed inset-0 flex items-center justify-center p-4 md:p-6">
-      <div className="w-full max-w-md relative animate-fade-up">
-        {/* Brand header (always above the sliding door) */}
-        <div className="text-center mb-6">
-          <div className="flex justify-center mb-3">
-            <LogoMark size={72} />
-          </div>
-          <h1 className="font-love text-5xl md:text-6xl gradient-text leading-tight">
-            HeartSync
-          </h1>
-          <p className="font-main text-rose-700/80 mt-2 text-base md:text-lg">
-            {mode === 'login'
-              ? 'Welcome back, lovebird 💕'
-              : 'Begin your love story today 💞'}
-          </p>
-        </div>
-
-        {/* Sliding Door Card */}
-        <div className="glass-strong cute-shadow-lg soft-border rounded-[28px] p-1.5">
-          <div className="door-wrap">
-            <div className={`door-track ${mode === 'login' ? 'door-login' : 'door-signup'}`}>
-              {/* LOGIN PANEL */}
-              <div className="door-panel p-6 md:p-7">
-                <form onSubmit={handleLogin} className="space-y-4">
-                  <h2 className="font-script text-3xl text-rose-600 text-center mb-1">
-                    Sign In
-                  </h2>
-                  <input
-                    type="email"
-                    placeholder="Email"
-                    required
-                    className="rose-input"
-                    value={lEmail}
-                    onChange={(e) => setLEmail(e.target.value)}
-                  />
-                  <input
-                    type="password"
-                    placeholder="Password"
-                    required
-                    className="rose-input"
-                    value={lPassword}
-                    onChange={(e) => setLPassword(e.target.value)}
-                  />
-                  {error && mode === 'login' && (
-                    <p className="text-sm text-rose-600 text-center font-semibold">{error}</p>
-                  )}
-                  <button
-                    type="submit"
-                    disabled={loading}
-                    className="btn-press hover-jelly w-full py-3.5 rounded-2xl text-white font-bold text-lg cute-shadow"
-                    style={{ background: 'linear-gradient(135deg, #f43f72, #e11d5a)' }}
-                  >
-                    {loading ? 'Loading…' : 'Log In 💖'}
-                  </button>
-
-                  <GoogleDivider />
-
-                  <button
-                    type="button"
-                    onClick={handleGoogle}
-                    className="btn-press hover-jelly w-full py-3 rounded-2xl font-semibold bg-white border-2 border-rose-200 hover:border-rose-300 transition flex items-center justify-center gap-2"
-                  >
-                    <GoogleIcon /> Continue with Google
-                  </button>
-
-                  <p className="text-center text-sm text-rose-700 mt-2">
-                    New here?{' '}
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setError('');
-                        setMode('signup');
-                      }}
-                      className="font-bold underline decoration-rose-300 hover:text-rose-600"
-                    >
-                      Create an account
-                    </button>
-                  </p>
-                </form>
-              </div>
-
-              {/* SIGNUP PANEL */}
-              <div className="door-panel p-6 md:p-7">
-                <form onSubmit={handleSignup} className="space-y-3">
-                  <h2 className="font-script text-3xl text-rose-600 text-center mb-1">
-                    Create Account
-                  </h2>
-                  <input
-                    type="text"
-                    placeholder="Username"
-                    required
-                    className="rose-input"
-                    value={username}
-                    onChange={(e) => setUsername(e.target.value)}
-                  />
-                  <div className="grid grid-cols-2 gap-3">
-                    <input
-                      type="text"
-                      placeholder="First Name"
-                      required
-                      className="rose-input"
-                      value={firstName}
-                      onChange={(e) => setFirstName(e.target.value)}
-                    />
-                    <input
-                      type="text"
-                      placeholder="Last Name"
-                      required
-                      className="rose-input"
-                      value={lastName}
-                      onChange={(e) => setLastName(e.target.value)}
-                    />
-                  </div>
-                  <input
-                    type="date"
-                    className="rose-input"
-                    value={dob}
-                    onChange={(e) => setDob(e.target.value)}
-                  />
-                  <input
-                    type="email"
-                    placeholder="Email"
-                    required
-                    className="rose-input"
-                    value={sEmail}
-                    onChange={(e) => setSEmail(e.target.value)}
-                  />
-                  <input
-                    type="password"
-                    placeholder="Password"
-                    required
-                    className="rose-input"
-                    value={sPassword}
-                    onChange={(e) => setSPassword(e.target.value)}
-                  />
-                  <label className="flex items-start gap-2 text-sm text-rose-700/80 px-1">
-                    <input
-                      type="checkbox"
-                      className="mt-1 accent-rose-500"
-                      checked={agree}
-                      onChange={(e) => setAgree(e.target.checked)}
-                    />
-                    <span>I agree to the Terms & sweet conditions 💌</span>
-                  </label>
-                  {error && mode === 'signup' && (
-                    <p className="text-sm text-rose-600 text-center font-semibold">{error}</p>
-                  )}
-                  <button
-                    type="submit"
-                    disabled={loading}
-                    className="btn-press hover-jelly w-full py-3.5 rounded-2xl text-white font-bold text-lg cute-shadow"
-                    style={{ background: 'linear-gradient(135deg, #f43f72, #e11d5a)' }}
-                  >
-                    {loading ? 'Loading…' : 'Sign Up 💞'}
-                  </button>
-
-                  <p className="text-center text-sm text-rose-700 mt-2">
-                    Already have an account?{' '}
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setError('');
-                        setMode('login');
-                      }}
-                      className="font-bold underline decoration-rose-300 hover:text-rose-600"
-                    >
-                      Sign in
-                    </button>
-                  </p>
-                </form>
-              </div>
+            <div className="mt-2 pt-2 border-t border-rose-100">
+              <p className="text-rose-400 text-xs">Invite Code</p>
+              <p className="font-digital text-rose-600 font-bold tracking-widest">{profile.invite_code}</p>
             </div>
           </div>
-        </div>
+        )}
+
+        <button
+          onClick={handleLogout}
+          className="w-full py-3 rounded-full bg-gradient-to-r from-rose-500 to-pink-500 text-white font-bold shadow-lg hover:scale-[1.03] btn-press transition-all duration-200"
+        >
+          🚪 Sign Out
+        </button>
+        <button
+          onClick={onClose}
+          className="w-full mt-3 py-2 rounded-full border-2 border-rose-200 text-rose-400 text-sm font-semibold hover:border-rose-400 transition-colors"
+        >
+          Cancel
+        </button>
       </div>
     </div>
   );
 }
 
-function GoogleDivider() {
+/* ============================================================
+   NAVBAR — centered column
+   ============================================================ */
+function Navbar({ profile, onSettingsOpen }: { profile: Profile | null; onSettingsOpen: () => void }) {
+  const navigate = useNavigate();
   return (
-    <div className="flex items-center gap-3 my-1">
-      <div className="h-px bg-rose-200 flex-1" />
-      <span className="text-xs text-rose-500 font-semibold">or</span>
-      <div className="h-px bg-rose-200 flex-1" />
+    <div className="navbar-outer">
+      <nav className="navbar-glass">
+        <button
+          onClick={() => navigate('/dashboard')}
+          className="text-xl font-bold text-rose-500 hover:scale-105 transition-transform"
+          style={{ fontFamily: 'var(--font-love)' }}
+        >
+          💗 HeartSync
+        </button>
+
+        <div className="flex items-center gap-3">
+          <button
+            onClick={() => navigate('/chat')}
+            className="flex items-center gap-1.5 px-4 py-1.5 rounded-full bg-rose-50 border border-rose-200 text-rose-600 text-sm font-semibold hover:bg-rose-100 btn-press transition-all duration-150"
+          >
+            💬 Chat
+          </button>
+          {profile && (
+            <span className="hidden sm:block text-rose-400 text-sm font-medium max-w-[100px] truncate">
+              @{profile.username}
+            </span>
+          )}
+          <button
+            onClick={onSettingsOpen}
+            className="w-9 h-9 rounded-full bg-rose-50 border border-rose-200 flex items-center justify-center text-rose-500 hover:bg-rose-100 btn-press transition-all duration-200 text-base"
+            style={{ transition: 'transform 0.3s ease, background 0.15s' }}
+            onMouseEnter={e => (e.currentTarget.style.transform = 'rotate(45deg)')}
+            onMouseLeave={e => (e.currentTarget.style.transform = 'rotate(0deg)')}
+          >
+            ⚙️
+          </button>
+        </div>
+      </nav>
     </div>
   );
 }
 
-function GoogleIcon() {
+/* ============================================================
+   SYNC TIMER
+   ============================================================ */
+function SyncTimer({ syncStart }: { syncStart: string | null }) {
+  const [elapsed, setElapsed] = useState({ d: 0, h: 0, m: 0, s: 0 });
+
+  useEffect(() => {
+    if (!syncStart) return;
+    const tick = () => {
+      const diff = Math.max(0, Date.now() - new Date(syncStart).getTime());
+      const s = Math.floor(diff / 1000);
+      setElapsed({
+        d: Math.floor(s / 86400),
+        h: Math.floor((s % 86400) / 3600),
+        m: Math.floor((s % 3600) / 60),
+        s: s % 60,
+      });
+    };
+    tick();
+    const id = setInterval(tick, 1000);
+    return () => clearInterval(id);
+  }, [syncStart]);
+
+  const pad = (n: number) => String(n).padStart(2, '0');
+  const units = [
+    { label: 'Days', val: elapsed.d },
+    { label: 'Hrs',  val: elapsed.h },
+    { label: 'Min',  val: elapsed.m },
+    { label: 'Sec',  val: elapsed.s },
+  ];
+
   return (
-    <svg width="20" height="20" viewBox="0 0 24 24">
-      <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
-      <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.99.66-2.25 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
-      <path fill="#FBBC05" d="M5.84 14.1c-.22-.66-.35-1.36-.35-2.1s.13-1.44.35-2.1V7.07H2.18A10.97 10.97 0 0 0 1 12c0 1.77.42 3.45 1.18 4.93l3.66-2.83z"/>
-      <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.2 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84C6.71 7.31 9.14 5.38 12 5.38z"/>
-    </svg>
+    <div className="glass-card cute-shadow rounded-3xl p-6 timer-glow text-center">
+      <p className="text-rose-400 font-semibold text-sm mb-3">💞 Together Since</p>
+      {syncStart ? (
+        <div className="flex justify-center gap-4">
+          {units.map(u => (
+            <div key={u.label} className="flex flex-col items-center">
+              <span className="font-digital text-3xl font-bold text-rose-600 leading-none">{pad(u.val)}</span>
+              <span className="text-rose-300 text-xs mt-1">{u.label}</span>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <p className="text-rose-300 text-sm">Link with your partner to start the timer 💌</p>
+      )}
+    </div>
   );
 }
 
-// ============================================================
-// Sync Timer Hook — ticks every second
-// ============================================================
-function useSyncTimer(startIso: string | null | undefined) {
-  const [now, setNow] = useState(() => Date.now());
-
-  useEffect(() => {
-    if (!startIso) return;
-    const id = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(id);
-  }, [startIso]);
-
-  return useMemo(() => {
-    if (!startIso) return null;
-    const start = new Date(startIso).getTime();
-    const diff = Math.max(0, now - start);
-    const days = Math.floor(diff / 86400000);
-    const hours = Math.floor((diff % 86400000) / 3600000);
-    const minutes = Math.floor((diff % 3600000) / 60000);
-    const seconds = Math.floor((diff % 60000) / 1000);
-    return { days, hours, minutes, seconds };
-  }, [now, startIso]);
-}
-
-// ============================================================
-// Dashboard
-// ============================================================
-function Dashboard({
-  userId,
-  profile,
-  onProfileChange,
-  onSyncSuccess,
-}: {
-  userId: string;
-  profile: Profile | null;
-  onProfileChange: (p: Profile) => void;
-  onSyncSuccess: () => void;
-}) {
+/* ============================================================
+   DASHBOARD
+   ============================================================ */
+function Dashboard() {
   const navigate = useNavigate();
+  const [profile, setProfile]             = useState<Profile | null>(null);
   const [partnerProfile, setPartnerProfile] = useState<Profile | null>(null);
-  const [inviteInput, setInviteInput] = useState('');
-  const [syncing, setSyncing] = useState(false);
-  const [syncError, setSyncError] = useState('');
-  const [bucket, setBucket] = useState<BucketItem[]>([]);
-  const [newBucket, setNewBucket] = useState('');
-  const [hugIncoming, setHugIncoming] = useState(false);
-  const [hugCooldown, setHugCooldown] = useState(false);
+  const [bucketList, setBucketList]       = useState<BucketItem[]>([]);
+  const [newBucket, setNewBucket]         = useState('');
+  const [partnerCode, setPartnerCode]     = useState('');
+  const [settingsOpen, setSettingsOpen]   = useState(false);
+  const [hugSent, setHugSent]             = useState(false);
+  const [hugReceived, setHugReceived]     = useState(false);
+  const [userId, setUserId]               = useState<string | null>(null);
 
-  const timer = useSyncTimer(profile?.sync_start_date);
-  const linked = Boolean(profile?.partner_id);
+  const MOODS = ['😊 Happy','🥰 In Love','😴 Sleepy','😤 Grumpy','🥺 Missing You','🎉 Excited','😌 Content','😢 Sad'];
 
-  // Load partner profile
   useEffect(() => {
-    if (!profile?.partner_id) {
-      setPartnerProfile(null);
-      return;
-    }
-    (async () => {
-      const { data } = await supabase
-        .from('profiles')
-        .select('*')
-        .eq('id', profile.partner_id)
-        .single();
-      if (data) setPartnerProfile(data as Profile);
-    })();
-  }, [profile?.partner_id]);
+    const init = async () => {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) return;
+      const uid = session.user.id;
+      setUserId(uid);
 
-  // Subscribe to partner's mood updates in realtime
-  useEffect(() => {
-    if (!profile?.partner_id) return;
-    const channel = supabase
-      .channel(`partner-${profile.partner_id}`)
-      .on(
-        'postgres_changes',
-        {
-          event: 'UPDATE',
-          schema: 'public',
-          table: 'profiles',
-          filter: `id=eq.${profile.partner_id}`,
-        },
-        (payload) => {
-          setPartnerProfile(payload.new as Profile);
-        },
-      )
-      .subscribe();
-    return () => {
-      supabase.removeChannel(channel);
+      const { data: p } = await supabase.from('profiles').select('*').eq('id', uid).single();
+      if (p) {
+        setProfile(p);
+        if (p.partner_id) {
+          const { data: pp } = await supabase.from('profiles').select('*').eq('id', p.partner_id).single();
+          if (pp) setPartnerProfile(pp);
+        }
+      }
+
+      const { data: bl } = await supabase.from('bucket_list').select('*').order('created_at', { ascending: false });
+      if (bl) setBucketList(bl);
     };
-  }, [profile?.partner_id]);
+    init();
+  }, []);
 
-  // Listen for incoming virtual hug
+  // Virtual Hug receive
   useEffect(() => {
     const channel = supabase.channel('system_events');
-    channel
-      .on('broadcast', { event: 'nudge' }, (payload) => {
-        const toId = (payload?.payload as any)?.to;
-        if (toId === userId) {
-          setHugIncoming(true);
-          setTimeout(() => setHugIncoming(false), 2200);
-        }
-      })
-      .subscribe();
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, [userId]);
+    channel.on('broadcast', { event: 'nudge' }, () => {
+      setHugReceived(true);
+      setTimeout(() => setHugReceived(false), 3500);
+    }).subscribe();
+    return () => { supabase.removeChannel(channel); };
+  }, []);
 
-  // Load bucket list
+  // Partner realtime mood
   useEffect(() => {
-    (async () => {
-      const ids = [userId, profile?.partner_id].filter(Boolean) as string[];
-      if (ids.length === 0) return;
-      const { data } = await supabase
-        .from('bucket_list')
-        .select('*')
-        .in('author_id', ids)
-        .order('created_at', { ascending: false });
-      if (data) setBucket(data as BucketItem[]);
-    })();
-  }, [userId, profile?.partner_id]);
+    if (!profile?.partner_id) return;
+    const sub = supabase.channel('partner-profile')
+      .on(
+        'postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'profiles', filter: `id=eq.${profile.partner_id}` },
+        payload => setPartnerProfile(prev => prev ? { ...prev, ...payload.new } : null),
+      )
+      .subscribe();
+    return () => { supabase.removeChannel(sub); };
+  }, [profile?.partner_id]);
 
-  // Update mood
-  const setMood = async (m: string) => {
-    if (!profile) return;
-    const { data } = await supabase
-      .from('profiles')
-      .update({ mood: m })
-      .eq('id', profile.id)
-      .select()
-      .single();
-    if (data) onProfileChange(data as Profile);
-  };
-
-  // Sync partner
-  const syncPartner = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setSyncError('');
-    const code = inviteInput.trim();
-    if (!code || !profile) return;
-    if (profile.invite_code && code.toLowerCase() === profile.invite_code.toLowerCase()) {
-      setSyncError("That's your own code 💔");
-      return;
-    }
-    setSyncing(true);
-    const { data: partners, error } = await supabase
-      .from('profiles')
-      .select('*')
-      .ilike('invite_code', code)
-      .limit(1);
-
-    if (error || !partners || partners.length === 0) {
-      setSyncing(false);
-      setSyncError('Code not found. Double-check with your love 🥺');
-      return;
-    }
-    const partner = partners[0] as Profile;
-    const nowIso = new Date().toISOString();
-
-    const [meRes, themRes] = await Promise.all([
-      supabase
-        .from('profiles')
-        .update({ partner_id: partner.id, sync_start_date: nowIso })
-        .eq('id', profile.id)
-        .select()
-        .single(),
-      supabase
-        .from('profiles')
-        .update({ partner_id: profile.id, sync_start_date: nowIso })
-        .eq('id', partner.id)
-        .select()
-        .single(),
-    ]);
-
-    setSyncing(false);
-    if (meRes.error || themRes.error) {
-      setSyncError(meRes.error?.message || themRes.error?.message || 'Could not sync');
-      return;
-    }
-    if (meRes.data) onProfileChange(meRes.data as Profile);
-    onSyncSuccess();
-  };
-
-  // Virtual hug
   const sendHug = async () => {
-    if (!profile?.partner_id || hugCooldown) return;
-    setHugCooldown(true);
-    await supabase.channel('system_events').send({
-      type: 'broadcast',
-      event: 'nudge',
-      payload: { from: userId, to: profile.partner_id },
-    });
-    setTimeout(() => setHugCooldown(false), 2500);
+    await supabase.channel('system_events').send({ type: 'broadcast', event: 'nudge', payload: {} });
+    setHugSent(true);
+    setTimeout(() => setHugSent(false), 2500);
   };
 
-  // Bucket list actions
-  const addBucket = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const title = newBucket.trim();
-    if (!title) return;
+  const setMood = async (mood: string) => {
+    if (!userId) return;
+    await supabase.from('profiles').update({ mood }).eq('id', userId);
+    setProfile(prev => prev ? { ...prev, mood } : null);
+  };
+
+  const addBucket = async () => {
+    if (!newBucket.trim() || !userId) return;
     const { data } = await supabase
       .from('bucket_list')
-      .insert({ title, author_id: userId, is_completed: false })
+      .insert({ title: newBucket.trim(), author_id: userId, is_completed: false })
       .select()
       .single();
-    if (data) setBucket((b) => [data as BucketItem, ...b]);
+    if (data) setBucketList(prev => [data, ...prev]);
     setNewBucket('');
   };
 
   const toggleBucket = async (item: BucketItem) => {
-    const { data } = await supabase
-      .from('bucket_list')
-      .update({ is_completed: !item.is_completed })
-      .eq('id', item.id)
-      .select()
-      .single();
-    if (data) setBucket((b) => b.map((x) => (x.id === item.id ? (data as BucketItem) : x)));
+    const updated = !item.is_completed;
+    await supabase.from('bucket_list').update({ is_completed: updated }).eq('id', item.id);
+    setBucketList(prev => prev.map(b => b.id === item.id ? { ...b, is_completed: updated } : b));
   };
 
-  // --- Render ---
-  return (
-    <div className="relative z-10 pt-24 pb-16 px-4 md:px-6 max-w-7xl mx-auto">
-      {hugIncoming && (
-        <div className="heartbeat-overlay">
-          <span className="animate-explosive-heartbeat">💞</span>
-        </div>
-      )}
-
-      {/* Greeting */}
-      <section className="text-center mb-8">
-        <h1 className="font-love text-5xl md:text-6xl gradient-text">
-          Hi {profile?.first_name || 'love'} 💕
-        </h1>
-        <p className="font-main text-rose-700/75 mt-1 text-base md:text-lg">
-          {linked ? 'Your heart is synced.' : "Let's connect you to your love."}
-        </p>
-      </section>
-
-      {/* NOT LINKED — Invite card */}
-      {!linked && (
-        <section className="max-w-2xl mx-auto glass-strong cute-shadow-lg soft-border rounded-[28px] p-6 md:p-8 animate-fade-up">
-          <h2 className="font-script text-3xl text-rose-600 text-center">
-            Link with your partner
-          </h2>
-          <p className="text-center text-rose-700/75 mt-1 mb-5">
-            Share your code, or enter theirs. One link lasts forever 💘
-          </p>
-
-          <div className="rounded-2xl p-5 glass-card soft-border text-center mb-5">
-            <p className="text-sm font-semibold text-rose-600">Your invite code</p>
-            <p className="font-digital text-3xl md:text-4xl text-rose-700 mt-2 select-all">
-              {profile?.invite_code || '— — — — — —'}
-            </p>
-            <button
-              onClick={() => {
-                if (profile?.invite_code) {
-                  navigator.clipboard.writeText(profile.invite_code);
-                }
-              }}
-              className="mt-3 btn-press hover-jelly px-4 py-2 rounded-full bg-rose-500 text-white font-semibold text-sm"
-            >
-              Copy code
-            </button>
-          </div>
-
-          <form onSubmit={syncPartner} className="flex flex-col sm:flex-row gap-3">
-            <input
-              className="rose-input flex-1"
-              placeholder="Enter partner's code"
-              value={inviteInput}
-              onChange={(e) => setInviteInput(e.target.value)}
-            />
-            <button
-              disabled={syncing}
-              className="btn-press hover-jelly px-6 py-3 rounded-2xl text-white font-bold cute-shadow"
-              style={{ background: 'linear-gradient(135deg, #f43f72, #e11d5a)' }}
-            >
-              {syncing ? 'Syncing…' : 'Heart Sync 💞'}
-            </button>
-          </form>
-          {syncError && (
-            <p className="text-sm text-rose-600 font-semibold text-center mt-3">{syncError}</p>
-          )}
-        </section>
-      )}
-
-      {/* LINKED — Dashboard Grid */}
-      {linked && (
-        <div className="grid grid-cols-1 lg:grid-cols-4 gap-5 md:gap-6">
-          {/* LEFT: Timer + Mood */}
-          <div className="lg:col-span-2 space-y-5 md:space-y-6">
-            {/* Sync Timer */}
-            <section className="glass-strong cute-shadow-lg soft-border rounded-[28px] p-6 md:p-8 text-center">
-              <p className="text-sm font-semibold text-rose-600 uppercase tracking-widest">
-                Synced for
-              </p>
-              <div className="mt-3 flex items-center justify-center gap-2 md:gap-4 flex-wrap">
-                <TimerBlock value={timer?.days ?? 0} label="days" />
-                <TimerBlock value={timer?.hours ?? 0} label="hours" />
-                <TimerBlock value={timer?.minutes ?? 0} label="min" />
-                <TimerBlock value={timer?.seconds ?? 0} label="sec" />
-              </div>
-              <p className="font-script text-2xl md:text-3xl text-rose-600 mt-4">
-                Every second with you ✨
-              </p>
-            </section>
-
-            {/* Mood Picker */}
-            <section className="glass-strong cute-shadow-lg soft-border rounded-[28px] p-6 md:p-7">
-              <h3 className="font-script text-2xl text-rose-600 mb-3">How do you feel?</h3>
-              <div className="grid grid-cols-4 gap-2.5">
-                {MOODS.map((m) => {
-                  const selected = profile?.mood === `${m.emoji} ${m.label}`;
-                  return (
-                    <button
-                      key={m.label}
-                      onClick={() => setMood(`${m.emoji} ${m.label}`)}
-                      className={`btn-press hover-jelly rounded-2xl py-3 px-2 text-center transition ${
-                        selected
-                          ? 'bg-rose-500 text-white cute-shadow'
-                          : 'bg-white/70 text-rose-700 hover:bg-rose-100'
-                      }`}
-                    >
-                      <div className="text-2xl">{m.emoji}</div>
-                      <div className="text-xs font-semibold mt-1">{m.label}</div>
-                    </button>
-                  );
-                })}
-              </div>
-
-              <div className="mt-5 rounded-2xl p-4 glass-card soft-border flex items-center gap-3">
-                <span className="text-3xl">{partnerProfile?.mood?.split(' ')[0] || '💭'}</span>
-                <div>
-                  <p className="text-xs text-rose-500 font-semibold">Partner's mood</p>
-                  <p className="text-rose-800 font-bold">
-                    {partnerProfile?.mood || 'Waiting for a vibe…'}
-                  </p>
-                </div>
-              </div>
-            </section>
-          </div>
-
-          {/* CENTER: Bucket List */}
-          <section className="lg:col-span-1 glass-strong cute-shadow-lg soft-border rounded-[28px] p-6">
-            <h3 className="font-script text-2xl text-rose-600 mb-3">Bucket List</h3>
-            <form onSubmit={addBucket} className="flex gap-2 mb-4">
-              <input
-                className="rose-input flex-1"
-                placeholder="Paris trip 🗼"
-                value={newBucket}
-                onChange={(e) => setNewBucket(e.target.value)}
-              />
-              <button
-                className="btn-press hover-jelly w-11 h-11 rounded-full text-white text-xl cute-shadow shrink-0"
-                style={{ background: 'linear-gradient(135deg, #f43f72, #e11d5a)' }}
-                aria-label="Add"
-              >
-                +
-              </button>
-            </form>
-            <ul className="space-y-2 max-h-[360px] overflow-y-auto pr-1">
-              {bucket.length === 0 && (
-                <li className="text-center text-rose-500/70 text-sm py-6">
-                  No dreams yet. Add one 💫
-                </li>
-              )}
-              {bucket.map((b) => (
-                <li
-                  key={b.id}
-                  onClick={() => toggleBucket(b)}
-                  className={`cursor-pointer rounded-2xl px-4 py-3 soft-border transition hover-jelly flex items-center gap-2 ${
-                    b.is_completed
-                      ? 'bg-rose-100 line-through text-rose-500'
-                      : 'bg-white/80 text-rose-800'
-                  }`}
-                >
-                  <span>{b.is_completed ? '💖' : '🤍'}</span>
-                  <span className="flex-1 truncate font-semibold">{b.title}</span>
-                </li>
-              ))}
-            </ul>
-          </section>
-
-          {/* RIGHT: Premium Action Buttons */}
-          <section className="lg:col-span-1 space-y-4 md:space-y-5">
-            <PremiumButton
-              label="Heart Sync"
-              sub="Your bond"
-              emoji="💞"
-              gradient="linear-gradient(135deg, #ff9ebd 0%, #f43f72 100%)"
-              badge={linked ? 'Linked' : 'Unlinked'}
-              pulse
-              onClick={() => {
-                const el = document.getElementById('sync-anchor');
-                el?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-              }}
-            />
-            <PremiumButton
-              label="Send Virtual Hug"
-              sub={hugCooldown ? 'Sent! 💨' : 'Tap to hug them'}
-              emoji="🤗"
-              gradient="linear-gradient(135deg, #ffb3c6 0%, #ff6aa0 100%)"
-              disabled={hugCooldown || !linked}
-              onClick={sendHug}
-            />
-            <PremiumButton
-              label="Open Chat"
-              sub="Say something cute"
-              emoji="💬"
-              gradient="linear-gradient(135deg, #f58eb5 0%, #e11d5a 100%)"
-              onClick={() => navigate('/chat')}
-            />
-          </section>
-        </div>
-      )}
-
-      <div id="sync-anchor" />
-    </div>
-  );
-}
-
-// Timer digit block
-function TimerBlock({ value, label }: { value: number; label: string }) {
-  const display = String(value).padStart(2, '0');
-  return (
-    <div className="flex flex-col items-center">
-      <div
-        className="font-digital timer-glow font-bold text-rose-600 bg-white/80 soft-border rounded-2xl px-3 md:px-5 py-2 md:py-3 min-w-[72px] md:min-w-[88px] text-center"
-        style={{ fontSize: 'clamp(28px, 4.5vw, 44px)' }}
-      >
-        {display}
-      </div>
-      <span className="text-xs md:text-sm text-rose-500 font-bold uppercase mt-1 tracking-wider">
-        {label}
-      </span>
-    </div>
-  );
-}
-
-// Big premium button
-function PremiumButton({
-  label,
-  sub,
-  emoji,
-  gradient,
-  badge,
-  pulse,
-  disabled,
-  onClick,
-}: {
-  label: string;
-  sub?: string;
-  emoji: string;
-  gradient: string;
-  badge?: string;
-  pulse?: boolean;
-  disabled?: boolean;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      onClick={onClick}
-      disabled={disabled}
-      className={`premium-btn relative w-full rounded-[28px] p-5 md:p-6 text-white text-left cute-shadow-lg soft-border ${
-        disabled ? 'opacity-60 cursor-not-allowed' : ''
-      }`}
-      style={{ background: gradient }}
-    >
-      <div className="flex items-center gap-4 relative z-[2]">
-        <span
-          className="flex items-center justify-center w-14 h-14 md:w-16 md:h-16 rounded-2xl text-3xl md:text-4xl bg-white/25"
-          style={{ backdropFilter: 'blur(6px)' }}
-        >
-          {emoji}
-        </span>
-        <div className="flex-1 min-w-0">
-          <div className="font-script text-2xl md:text-3xl leading-tight">{label}</div>
-          {sub && <div className="text-sm md:text-base text-white/85 font-semibold">{sub}</div>}
-        </div>
-        {badge && (
-          <span className="text-xs md:text-sm font-bold bg-white/25 px-3 py-1 rounded-full">
-            {badge}
-          </span>
-        )}
-      </div>
-      {pulse && <span className="pulse-ring" />}
-    </button>
-  );
-}
-
-// ============================================================
-// ChatUI · WhatsApp-style
-// ============================================================
-function ChatUI({
-  userId,
-  profile,
-}: {
-  userId: string;
-  profile: Profile | null;
-}) {
-  const [messages, setMessages] = useState<Message[]>([]);
-  const [input, setInput] = useState('');
-  const [partnerTyping, setPartnerTyping] = useState(false);
-  const scrollerRef = useRef<HTMLDivElement>(null);
-  const channelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
-  const typingTimeout = useRef<number | null>(null);
-  const myTypingSentAt = useRef<number>(0);
-
-  const partnerId = profile?.partner_id || null;
-
-  // Initial load
-  useEffect(() => {
-    if (!partnerId) return;
-    (async () => {
-      const { data } = await supabase
-        .from('messages')
-        .select('*')
-        .in('sender_id', [userId, partnerId])
-        .order('created_at', { ascending: true })
-        .limit(200);
-      if (data) setMessages(data as Message[]);
-    })();
-  }, [userId, partnerId]);
-
-  // Realtime: inserts + typing broadcasts
-  useEffect(() => {
-    if (!partnerId) return;
-    const channel = supabase.channel('chat-room', {
-      config: { broadcast: { self: false } },
-    });
-    channelRef.current = channel;
-
-    channel
-      .on(
-        'postgres_changes',
-        { event: 'INSERT', schema: 'public', table: 'messages' },
-        (payload) => {
-          const m = payload.new as Message;
-          if (m.sender_id === userId || m.sender_id === partnerId) {
-            setMessages((prev) => (prev.find((x) => x.id === m.id) ? prev : [...prev, m]));
-          }
-        },
-      )
-      .on('broadcast', { event: 'typing' }, (payload) => {
-        const who = (payload?.payload as any)?.from;
-        if (who === partnerId) {
-          setPartnerTyping(true);
-          if (typingTimeout.current) window.clearTimeout(typingTimeout.current);
-          typingTimeout.current = window.setTimeout(() => setPartnerTyping(false), 2200);
-        }
-      })
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-      channelRef.current = null;
-      if (typingTimeout.current) window.clearTimeout(typingTimeout.current);
-    };
-  }, [userId, partnerId]);
-
-  // Auto-scroll to latest
-  useEffect(() => {
-    const el = scrollerRef.current;
-    if (!el) return;
-    el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
-  }, [messages, partnerTyping]);
-
-  const sendTyping = () => {
-    const now = Date.now();
-    if (now - myTypingSentAt.current < 1500) return;
-    myTypingSentAt.current = now;
-    channelRef.current?.send({
-      type: 'broadcast',
-      event: 'typing',
-      payload: { from: userId },
-    });
+  const linkPartner = async () => {
+    if (!partnerCode.trim() || !userId) return;
+    const { data: partner } = await supabase.from('profiles').select('*').ilike('invite_code', partnerCode.trim()).single();
+    if (!partner) { alert('No partner found with that code 💔'); return; }
+    const now = new Date().toISOString();
+    await supabase.from('profiles').update({ partner_id: partner.id, sync_start_date: now }).eq('id', userId);
+    await supabase.from('profiles').update({ partner_id: userId, sync_start_date: now }).eq('id', partner.id);
+    setProfile(prev => prev ? { ...prev, partner_id: partner.id, sync_start_date: now } : null);
+    setPartnerProfile(partner);
+    setPartnerCode('');
   };
 
-  const send = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const content = input.trim();
-    if (!content || !partnerId) return;
-    setInput('');
-    const { data, error } = await supabase
-      .from('messages')
-      .insert({ content, sender_id: userId })
-      .select()
-      .single();
-    if (!error && data) {
-      setMessages((prev) => [...prev, data as Message]);
-    }
-  };
-
-  if (!partnerId) {
-    return (
-      <div className="relative z-10 pt-24 pb-16 px-4 max-w-xl mx-auto text-center">
-        <div className="glass-strong cute-shadow-lg soft-border rounded-[28px] p-8 animate-fade-up">
-          <div className="text-6xl mb-3">💔</div>
-          <h2 className="font-love text-3xl gradient-text">No partner linked</h2>
-          <p className="text-rose-700/80 mt-2">
-            Link with your love from the Dashboard to start chatting.
-          </p>
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <div className="relative z-10 pt-20 pb-4 px-0 md:px-4 max-w-3xl mx-auto h-screen flex flex-col">
-      <div className="flex-1 flex flex-col glass-strong cute-shadow-lg soft-border md:rounded-[28px] overflow-hidden">
-        {/* Chat header */}
-        <div className="flex items-center gap-3 px-5 py-3 border-b border-rose-100 bg-white/70">
-          <span className="text-2xl">💞</span>
-          <div>
-            <p className="font-script text-xl text-rose-700 leading-none">Private Chat</p>
-            <p className="text-xs text-rose-500 font-semibold">
-              with @{/* eslint-disable-next-line */}
-              <PartnerName partnerId={partnerId} />
-            </p>
-          </div>
-        </div>
-
-        {/* Messages */}
-        <div
-          ref={scrollerRef}
-          className="flex-1 overflow-y-auto chat-surface px-3 md:px-5 py-5 space-y-2"
-        >
-          {messages.length === 0 && (
-            <div className="text-center text-rose-500/80 mt-10">
-              <div className="text-5xl mb-2">💌</div>
-              <p className="font-script text-2xl">Say something sweet</p>
-            </div>
-          )}
-
-          {messages.map((m) => {
-            const mine = m.sender_id === userId;
-            return (
-              <div key={m.id} className={`flex ${mine ? 'justify-end' : 'justify-start'}`}>
-                <div
-                  className={`${
-                    mine ? 'msg-bubble-me' : 'msg-bubble-partner'
-                  } max-w-[78%] md:max-w-[70%] px-4 py-2.5 animate-fade-up`}
-                >
-                  <p className="text-[15px] leading-relaxed whitespace-pre-wrap break-words">
-                    {m.content}
-                  </p>
-                  <p
-                    className={`text-[10px] mt-1 ${
-                      mine ? 'text-white/80' : 'text-rose-400'
-                    } text-right`}
-                  >
-                    {formatTime(m.created_at)}
-                  </p>
-                </div>
-              </div>
-            );
-          })}
-
-          {partnerTyping && (
-            <div className="flex justify-start animate-fade-up">
-              <div className="typing-dots" aria-label="Partner is typing">
-                <span />
-                <span />
-                <span />
-              </div>
-              <span className="ml-2 text-xs text-rose-500 self-end mb-1 font-semibold">
-                Partner is typing…
-              </span>
-            </div>
-          )}
-        </div>
-
-        {/* Composer */}
-        <form
-          onSubmit={send}
-          className="flex items-center gap-2 px-3 md:px-4 py-3 border-t border-rose-100 bg-white/75"
-        >
-          <input
-            className="rose-input flex-1"
-            placeholder="Type a love note…"
-            value={input}
-            onChange={(e) => {
-              setInput(e.target.value);
-              sendTyping();
-            }}
-          />
-          <button
-            type="submit"
-            className="btn-press hover-jelly w-12 h-12 rounded-full text-white text-xl cute-shadow shrink-0"
-            style={{ background: 'linear-gradient(135deg, #f43f72, #e11d5a)' }}
-            aria-label="Send"
-          >
-            ➤
-          </button>
-        </form>
-      </div>
-    </div>
-  );
-}
-
-function formatTime(iso: string) {
-  try {
-    const d = new Date(iso);
-    return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-  } catch {
-    return '';
-  }
-}
-
-function PartnerName({ partnerId }: { partnerId: string }) {
-  const [name, setName] = useState('loading…');
-  useEffect(() => {
-    (async () => {
-      const { data } = await supabase
-        .from('profiles')
-        .select('username, first_name')
-        .eq('id', partnerId)
-        .single();
-      if (data) setName(data.username || data.first_name || 'your_love');
-    })();
-  }, [partnerId]);
-  return <>{name}</>;
-}
-
-// ============================================================
-// Protected layout wrapper (adds Navbar + Settings + Background)
-// ============================================================
-function Shell({
-  profile,
-  onProfileChange,
-  children,
-}: {
-  profile: Profile | null;
-  onProfileChange: (p: Profile) => void;
-  children: React.ReactNode;
-}) {
-  const [settingsOpen, setSettingsOpen] = useState(false);
   return (
     <>
-      <Background />
-      <Navbar profile={profile} onOpenSettings={() => setSettingsOpen(true)} />
-      {children}
-      <SettingsModal
-        open={settingsOpen}
-        onClose={() => setSettingsOpen(false)}
-        profile={profile}
-        onProfileChange={onProfileChange}
-      />
+      <Navbar profile={profile} onSettingsOpen={() => setSettingsOpen(true)} />
+      {settingsOpen && <SettingsModal profile={profile} onClose={() => setSettingsOpen(false)} />}
+
+      {/* Virtual Hug Overlay */}
+      {hugReceived && (
+        <div className="heartbeat-overlay">
+          <div className="animate-explosive-heartbeat text-8xl mb-4">💗</div>
+          <p className="text-rose-600 font-bold text-2xl" style={{ fontFamily: 'var(--font-love)' }}>
+            Virtual Hug!
+          </p>
+          <p className="text-rose-400 mt-1">
+            {partnerProfile?.first_name || 'Your partner'} sent you love 🥰
+          </p>
+        </div>
+      )}
+
+      {/* Centered page content */}
+      <div className="min-h-screen pt-20 pb-10 relative z-10">
+        <div className="app-wrapper">
+          <div className="space-y-5">
+
+            {/* Partner Sync Banner */}
+            {!profile?.partner_id ? (
+              <div className="glass-card cute-shadow rounded-3xl p-6">
+                <h3 className="text-rose-500 font-bold text-lg mb-1">🔗 Link Your Partner</h3>
+                <p className="text-rose-300 text-sm mb-4">Share your code or enter theirs to connect 💌</p>
+                {profile?.invite_code && (
+                  <div className="bg-rose-50 rounded-2xl p-3 mb-4 text-center">
+                    <p className="text-rose-400 text-xs mb-1">Your Invite Code</p>
+                    <p className="font-digital text-rose-600 text-2xl tracking-widest font-bold">
+                      {profile.invite_code}
+                    </p>
+                  </div>
+                )}
+                <div className="flex gap-2">
+                  <input
+                    className="input-love flex-1"
+                    placeholder="Enter partner's code..."
+                    value={partnerCode}
+                    onChange={e => setPartnerCode(e.target.value)}
+                    onKeyDown={e => e.key === 'Enter' && linkPartner()}
+                  />
+                  <button
+                    onClick={linkPartner}
+                    className="px-5 py-2 rounded-full bg-rose-500 text-white font-bold hover:bg-rose-600 btn-press transition-all"
+                  >
+                    Connect 💞
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="glass-card cute-shadow rounded-3xl p-5 flex items-center gap-4">
+                <div className="text-4xl">💑</div>
+                <div className="flex-1">
+                  <p className="text-rose-600 font-bold">
+                    Synced with {partnerProfile?.first_name || 'your love'} 💗
+                  </p>
+                  <p className="text-rose-400 text-sm">{partnerProfile?.mood || '...'}</p>
+                </div>
+              </div>
+            )}
+
+            {/* Sync Timer */}
+            <SyncTimer syncStart={profile?.sync_start_date ?? null} />
+
+            {/* Action Buttons */}
+            <div className="grid grid-cols-2 gap-4">
+              <button
+                onClick={() => navigate('/chat')}
+                className="glass-card cute-shadow rounded-3xl p-6 flex flex-col items-center gap-2 hover-jelly btn-press border border-transparent hover:border-rose-300 transition-all duration-200 group"
+              >
+                <span className="text-4xl group-hover:scale-110 transition-transform">💬</span>
+                <span className="text-rose-600 font-bold text-sm">Private Chat</span>
+              </button>
+              <button
+                onClick={sendHug}
+                disabled={hugSent}
+                className="glass-card cute-shadow rounded-3xl p-6 flex flex-col items-center gap-2 hover-jelly btn-press border border-transparent hover:border-rose-300 transition-all duration-200 group disabled:opacity-70"
+              >
+                <span className="text-4xl group-hover:scale-110 transition-transform">
+                  {hugSent ? '💌' : '🤗'}
+                </span>
+                <span className="text-rose-600 font-bold text-sm">
+                  {hugSent ? 'Hug Sent!' : 'Virtual Hug'}
+                </span>
+              </button>
+            </div>
+
+            {/* Mood Picker */}
+            <div className="glass-card cute-shadow rounded-3xl p-6">
+              <h3 className="text-rose-500 font-bold text-lg mb-4">💭 How are you feeling?</h3>
+              <div className="grid grid-cols-4 gap-2">
+                {MOODS.map(m => (
+                  <button
+                    key={m}
+                    onClick={() => setMood(m)}
+                    className={`rounded-2xl py-2 px-1 text-xs font-semibold transition-all duration-200 btn-press hover-jelly ${
+                      profile?.mood === m
+                        ? 'bg-rose-500 text-white shadow-lg scale-105'
+                        : 'bg-rose-50 text-rose-500 hover:bg-rose-100'
+                    }`}
+                  >
+                    {m}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Bucket List */}
+            <div className="glass-card cute-shadow rounded-3xl p-6">
+              <h3 className="text-rose-500 font-bold text-lg mb-4">🪣 Our Bucket List</h3>
+              <div className="flex gap-2 mb-4">
+                <input
+                  className="input-love flex-1"
+                  placeholder="Add a dream together... 🌙"
+                  value={newBucket}
+                  onChange={e => setNewBucket(e.target.value)}
+                  onKeyDown={e => e.key === 'Enter' && addBucket()}
+                />
+                <button
+                  onClick={addBucket}
+                  className="px-4 py-2 rounded-full bg-rose-500 text-white font-bold hover:bg-rose-600 btn-press transition-all"
+                >
+                  +
+                </button>
+              </div>
+              <div className="space-y-2 max-h-60 overflow-y-auto">
+                {bucketList.length === 0 && (
+                  <p className="text-rose-300 text-sm text-center py-4">No dreams yet... add one! 💭</p>
+                )}
+                {bucketList.map(item => (
+                  <div
+                    key={item.id}
+                    onClick={() => toggleBucket(item)}
+                    className={`flex items-center gap-3 p-3 rounded-2xl cursor-pointer transition-all duration-200 hover-jelly ${
+                      item.is_completed ? 'bg-green-50 border border-green-200' : 'bg-rose-50 hover:bg-rose-100'
+                    }`}
+                  >
+                    <span className="text-lg">{item.is_completed ? '✅' : '🌸'}</span>
+                    <span className={`text-sm font-medium ${item.is_completed ? 'line-through text-gray-400' : 'text-rose-600'}`}>
+                      {item.title}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+          </div>
+        </div>
+      </div>
     </>
   );
 }
 
-// ============================================================
-// Root App · Session + Routes
-// ============================================================
-export default function App() {
-  const [session, setSession] = useState<any>(null);
-  const [loadingSession, setLoadingSession] = useState(true);
-  const [profile, setProfile] = useState<Profile | null>(null);
-  const [showHug, setShowHug] = useState(false);
+/* ============================================================
+   CHAT UI — WhatsApp style, centered column
+   ============================================================ */
+function ChatUI() {
+  const navigate = useNavigate();
+  const [messages, setMessages]       = useState<Message[]>([]);
+  const [newMsg, setNewMsg]           = useState('');
+  const [userId, setUserId]           = useState<string | null>(null);
+  const [partnerName, setPartnerName] = useState('');
+  const [isTyping, setIsTyping]       = useState(false);
+  const [profile, setProfile]         = useState<Profile | null>(null);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const bottomRef   = useRef<HTMLDivElement>(null);
+  const typingTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Session
   useEffect(() => {
-    supabase.auth.getSession().then(({ data }) => {
-      setSession(data.session);
-      setLoadingSession(false);
-    });
-    const { data: sub } = supabase.auth.onAuthStateChange((_e, s) => {
-      setSession(s);
-    });
-    return () => sub.subscription.unsubscribe();
-  }, []);
+    const init = async () => {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) { navigate('/'); return; }
+      const uid = session.user.id;
+      setUserId(uid);
 
-  // Profile fetch + realtime on my own row
-  useEffect(() => {
-    if (!session?.user?.id) {
-      setProfile(null);
-      return;
-    }
-    const uid = session.user.id as string;
-    (async () => {
-      const { data } = await supabase.from('profiles').select('*').eq('id', uid).single();
-      if (data) setProfile(data as Profile);
-    })();
+      const { data: p } = await supabase.from('profiles').select('*').eq('id', uid).single();
+      if (p) {
+        setProfile(p);
+        if (p.partner_id) {
+          const { data: pp } = await supabase.from('profiles').select('first_name').eq('id', p.partner_id).single();
+          if (pp) setPartnerName(pp.first_name);
+        }
+      }
 
-    const channel = supabase
-      .channel(`me-${uid}`)
-      .on(
-        'postgres_changes',
-        { event: 'UPDATE', schema: 'public', table: 'profiles', filter: `id=eq.${uid}` },
-        (payload) => setProfile(payload.new as Profile),
-      )
-      .subscribe();
-    return () => {
-      supabase.removeChannel(channel);
+      const { data: msgs } = await supabase
+        .from('messages')
+        .select('*')
+        .order('created_at', { ascending: true })
+        .limit(100);
+      if (msgs) setMessages(msgs);
     };
-  }, [session?.user?.id]);
+    init();
+  }, [navigate]);
 
-  if (loadingSession) {
-    return (
-      <>
-        <Background />
-        <div className="fixed inset-0 flex items-center justify-center">
-          <div className="flex flex-col items-center gap-3">
-            <div className="animate-spin-slow text-5xl">💞</div>
-            <p className="font-script text-2xl text-rose-600">Loading your love…</p>
-          </div>
-        </div>
-      </>
-    );
-  }
+  // Realtime subscription — logic unchanged
+  useEffect(() => {
+    const channel = supabase.channel('chat-room')
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages' }, payload => {
+        const msg = payload.new as Message;
+        setMessages(prev => [...prev, msg]);
+        if (msg.sender_id !== userId) setIsTyping(false);
+      })
+      .subscribe();
+    return () => { supabase.removeChannel(channel); };
+  }, [userId]);
 
-  if (!session) {
-    return (
-      <>
-        <Background />
-        <Auth />
-      </>
-    );
-  }
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages]);
 
-  const userId = session.user.id as string;
+  // Typing broadcast
+  useEffect(() => {
+    const channel = supabase.channel('typing_events');
+    channel.on('broadcast', { event: 'typing' }, payload => {
+      if (payload.payload?.sender !== userId) {
+        setIsTyping(true);
+        if (typingTimer.current) clearTimeout(typingTimer.current);
+        typingTimer.current = setTimeout(() => setIsTyping(false), 3000);
+      }
+    }).subscribe();
+    return () => { supabase.removeChannel(channel); };
+  }, [userId]);
+
+  const broadcastTyping = useCallback(async () => {
+    await supabase.channel('typing_events').send({
+      type: 'broadcast', event: 'typing', payload: { sender: userId },
+    });
+  }, [userId]);
+
+  const sendMessage = async () => {
+    if (!newMsg.trim() || !userId) return;
+    const content = newMsg.trim();
+    setNewMsg('');
+    await supabase.from('messages').insert({ content, sender_id: userId });
+  };
+
+  const formatTime = (ts: string) =>
+    new Date(ts).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
 
   return (
+    <>
+      <Navbar profile={profile} onSettingsOpen={() => setSettingsOpen(true)} />
+      {settingsOpen && <SettingsModal profile={profile} onClose={() => setSettingsOpen(false)} />}
+
+      {/* Centered chat column */}
+      <div className="chat-outer" style={{ paddingTop: '64px' }}>
+        <div className="chat-inner">
+
+          {/* Chat sub-header */}
+          <div className="chat-header">
+            <button
+              onClick={() => navigate('/dashboard')}
+              className="text-rose-400 hover:text-rose-600 text-xl btn-press mr-1"
+            >
+              ←
+            </button>
+            <div className="w-9 h-9 rounded-full bg-gradient-to-br from-rose-400 to-pink-400 flex items-center justify-center text-white font-bold text-base flex-shrink-0">
+              {partnerName ? partnerName[0].toUpperCase() : '💗'}
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="text-rose-700 font-bold text-sm truncate">{partnerName || 'Your Love'}</p>
+              <p className="text-rose-400 text-xs">
+                {isTyping ? '✍️ typing...' : '💗 HeartSync Chat'}
+              </p>
+            </div>
+          </div>
+
+          {/* Messages */}
+          <div className="flex-1 overflow-y-auto px-4 py-4 space-y-2 chat-scroll">
+            {messages.map(msg => {
+              const isMine = msg.sender_id === userId;
+              return (
+                <div
+                  key={msg.id}
+                  className={`flex ${isMine ? 'justify-end' : 'justify-start'} bubble-enter`}
+                >
+                  <div
+                    className={`max-w-[78%] px-4 py-2.5 shadow-sm ${
+                      isMine
+                        ? 'bg-gradient-to-br from-rose-500 to-pink-500 text-white rounded-[18px] rounded-br-[4px]'
+                        : 'bg-white text-rose-800 border border-rose-100 rounded-[18px] rounded-bl-[4px]'
+                    }`}
+                  >
+                    <p className="text-sm leading-relaxed">{msg.content}</p>
+                    <p className={`text-[10px] mt-0.5 ${isMine ? 'text-rose-200' : 'text-rose-300'} text-right`}>
+                      {formatTime(msg.created_at)}
+                    </p>
+                  </div>
+                </div>
+              );
+            })}
+
+            {/* Typing indicator */}
+            {isTyping && (
+              <div className="flex justify-start bubble-enter">
+                <div className="bg-white border border-rose-100 rounded-[18px] rounded-bl-[4px] px-4 py-3 flex items-center gap-1.5 shadow-sm">
+                  <div className="typing-dot" />
+                  <div className="typing-dot" />
+                  <div className="typing-dot" />
+                </div>
+              </div>
+            )}
+
+            <div ref={bottomRef} />
+          </div>
+
+          {/* Input bar */}
+          <div className="chat-input-bar">
+            <input
+              className="input-love flex-1 text-sm"
+              placeholder="Type something sweet... 💌"
+              value={newMsg}
+              onChange={e => { setNewMsg(e.target.value); broadcastTyping(); }}
+              onKeyDown={e => e.key === 'Enter' && sendMessage()}
+            />
+            <button
+              onClick={sendMessage}
+              disabled={!newMsg.trim()}
+              className="w-10 h-10 flex-shrink-0 rounded-full bg-gradient-to-br from-rose-500 to-pink-500 text-white flex items-center justify-center shadow-lg hover:scale-105 btn-press disabled:opacity-50 transition-all text-lg"
+            >
+              💗
+            </button>
+          </div>
+        </div>
+      </div>
+    </>
+  );
+}
+
+/* ============================================================
+   APP ROOT
+   ============================================================ */
+function AppInner() {
+  const [session, setSession] = useState<boolean | null>(null);
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data: { session: s } }) => {
+      setSession(!!s);
+      if (s && window.location.pathname === '/') navigate('/dashboard');
+    });
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, s) => {
+      setSession(!!s);
+      if (s) { if (window.location.pathname === '/') navigate('/dashboard'); }
+      else navigate('/');
+    });
+    return () => subscription.unsubscribe();
+  }, [navigate]);
+
+  if (session === null) {
+    return (
+      <div className="fixed inset-0 flex items-center justify-center">
+        <div className="text-rose-400 text-4xl" style={{ animation: 'heartPulse 1.2s ease-in-out infinite' }}>
+          💗
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <Routes>
+      <Route path="/"          element={session ? null    : <Auth />} />
+      <Route path="/dashboard" element={session ? <Dashboard /> : <Auth />} />
+      <Route path="/chat"      element={session ? <ChatUI />    : <Auth />} />
+    </Routes>
+  );
+}
+
+export default function App() {
+  return (
     <BrowserRouter>
-      {showHug && <HuggingHearts onDone={() => setShowHug(false)} />}
-      <Routes>
-        <Route
-          path="/dashboard"
-          element={
-            <Shell profile={profile} onProfileChange={setProfile}>
-              <Dashboard
-                userId={userId}
-                profile={profile}
-                onProfileChange={setProfile}
-                onSyncSuccess={() => setShowHug(true)}
-              />
-            </Shell>
-          }
-        />
-        <Route
-          path="/chat"
-          element={
-            <Shell profile={profile} onProfileChange={setProfile}>
-              <ChatUI userId={userId} profile={profile} />
-            </Shell>
-          }
-        />
-        <Route path="*" element={<Navigate to="/dashboard" replace />} />
-      </Routes>
+      <Background />
+      <AppInner />
     </BrowserRouter>
   );
 }
