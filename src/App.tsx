@@ -124,7 +124,7 @@ function SettingsModal({profile,onClose}:{profile:Profile|null;onClose:()=>void}
 /* ============================================================
    DASHBOARD NAVBAR (unchanged logic, now with Profile & Game)
    ============================================================ */
-function DashboardNavbar({profile,onSettingsOpen,onChatOpen,onProfileOpen,onGameOpen}:{
+function DashboardNavbar({ profile:_profile,onSettingsOpen,onChatOpen,onProfileOpen,onGameOpen}:{
   profile:Profile|null; onSettingsOpen:()=>void; onChatOpen:()=>void;
   onProfileOpen:()=>void; onGameOpen:()=>void;
 }) {
@@ -520,7 +520,7 @@ function shuffle<T>(arr:T[]):T[]{return [...arr].sort(()=>Math.random()-0.5);}
 
 type GamePhase = 'answering' | 'scoring' | 'result';
 
-function GamePage({profile,onClose}:{profile:Profile|null;onClose:()=>void}) {
+function GamePage({profile :_profile,onClose}:{profile:Profile|null;onClose:()=>void}) {
   const [questions,setQuestions]   = useState<string[]>(()=>shuffle(QUESTION_BANK).slice(0,10));
   const [answers,setAnswers]       = useState<string[]>(Array(10).fill(''));
   const [scores,setScores]         = useState<(boolean|null)[]>(Array(10).fill(null));
@@ -751,7 +751,7 @@ function MoodCard({profile,userId,onMoodChange}:{profile:Profile|null;userId:str
   );
 }
 
-function BucketListCard({bucketList,userId,onAdd,onToggle}:{bucketList:BucketItem[];userId:string|null;onAdd:(item:{date:string;location:string;idea:string})=>void;onToggle:(item:BucketItem)=>void}) {
+function BucketListCard({bucketList,userId: _userId,onAdd,onToggle}:{bucketList:BucketItem[];userId:string|null;onAdd:(item:{date:string;location:string;idea:string})=>void;onToggle:(item:BucketItem)=>void}) {
   const [date,setDate]=useState(''); const [location,setLocation]=useState(''); const [idea,setIdea]=useState('');
   const handleSave=()=>{if(!idea.trim())return;onAdd({date,location,idea});setDate('');setLocation('');setIdea('');};
   return (
