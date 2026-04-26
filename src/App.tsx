@@ -1,6 +1,14 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { BrowserRouter, Routes, Route, useNavigate } from 'react-router-dom';
 import { supabase } from './lib/supabase';
+import { Mail } from 'lucide-react';
+
+// Custom Github Icon
+const GithubIcon = ({ size = 16 }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M15 22v-4a4.8 4.8 0 0 0-1-3.24c3-.34 6-1.53 6-6.76a5.2 5.2 0 0 0-1.39-3.6 4.9 4.9 0 0 0-.1-3.5s-1.13-.35-3.6 1.3a12.5 12.5 0 0 0-6.4 0C5.8 3.5 4.6 3.85 4.6 3.85a4.9 4.9 0 0 0-.1 3.5A5.2 5.2 0 0 0 3 10.8c0 5.22 3 6.42 6 6.76a4.8 4.8 0 0 0-1 3.24v4"></path>
+  </svg>
+);
 
 /* ============================================================
    TYPES
@@ -911,6 +919,35 @@ function Dashboard() {
           </div>
 
           <CoupleMemoryGrid/>
+         {/* ==========================================
+              DEVELOPER INFO FOOTER
+              ========================================== */}
+          <div className="mt-16 pb-8 w-full flex flex-col items-center justify-center text-sm text-[var(--db-text-soft)] opacity-80">
+            <p className="font-medium text-center">
+              Made with <span className="animate-pulse inline-block text-rose-500">💗</span> by Abhishek Shukla
+            </p>
+            
+            {/* Flex-col use kiya hai taaki GitHub aur Email alag lines par aayein */}
+            <div className="flex flex-col items-center gap-2 mt-3">
+              <a 
+                href="https://github.com/Absabhi0" 
+                target="_blank" 
+                rel="noopener noreferrer" 
+                className="hover:text-[var(--db-accent)] transition-colors font-medium flex items-center gap-1.5"
+              >
+                <GithubIcon size={16} />
+                GitHub
+              </a>
+              
+              <a 
+                href="mailto:abs.abhi188@gmail.com" 
+                className="hover:text-[var(--db-accent)] transition-colors font-medium flex items-center gap-1.5"
+              >
+                <Mail size={16} />
+                Email
+              </a>
+            </div>
+          </div>
         </div>
       </div>
     </>
