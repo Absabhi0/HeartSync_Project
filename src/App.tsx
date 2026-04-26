@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { BrowserRouter, Routes, Route, useNavigate } from 'react-router-dom';
 import { supabase } from './lib/supabase';
 import { Mail } from 'lucide-react';
+import { z } from 'zod';
 
 // Custom Github Icon
 const GithubIcon = ({ size = 16 }) => (
@@ -17,7 +18,10 @@ interface Profile {
   id: string; username: string; first_name: string; last_name: string;
   dob: string; mood: string; partner_id: string | null;
   invite_code: string; sync_start_date: string | null;
+  last_unsynced_at: string | null;   // ← ADD
+  unsync_count: number;              // ← ADD
 }
+
 interface Message {
   id: string; content: string; sender_id: string; created_at: string;
   is_gift?: boolean; gift_time?: string;
@@ -50,6 +54,55 @@ function Background() {
     </div>
   );
 }
+// sigup schema and helper function come next.\
+ const signUpSchema = z.object({
+  username: z
+    .string()
+    .min(3, 'Username must be at least 3 characters')
+    .max(30, 'Username is too long')
+    .regex(/^[a-zA-Z0-9_]+$/, 'Username can only contain letters, numbers and _'),
+
+  firstName: z
+    .string()
+    .min(1, 'First name is required'),
+
+  lastName: z
+    .string()
+    .min(1, 'Last name is required'),
+
+  email: z
+    .string()
+    .email('Please enter a valid email address'),
+
+  password: z
+    .string()
+    .min(8, 'Password must be at least 8 characters'),
+
+  dob: z
+    .string()
+    .min(1, 'Date of birth is required')
+    .refine((val) => {
+      // Parse the date string and check the user is 18+
+      const birthDate  = new Date(val);
+      const today      = new Date();
+      const cutoff     = new Date(
+        today.getFullYear() - 18,
+        today.getMonth(),
+        today.getDate()
+      );
+      return birthDate <= cutoff;
+    }, {
+      message: "You must be 18 or older to join HeartSync 💔",
+    }),
+});
+
+// A helper that surfaces the first Zod error as a plain string.
+// Usage: const msg = firstZodError(result.error)
+function firstZodError(err: z.ZodError): string {
+  return err.issues[0]?.message ?? 'Validation error';
+}
+
+// --------------- end of schema block ---------------
 
 /* ============================================================
    AUTH (UNTOUCHED)
@@ -61,9 +114,103 @@ function Auth() {
   const [lastName,setLastName]=useState(''); const [dob,setDob]=useState('');
   const [agreeTerms,setAgreeTerms]=useState(false);
   const [loading,setLoading]=useState(false); const [error,setError]=useState(''); const [info,setInfo]=useState('');
-  const switchMode=(next:'login'|'signup')=>{setMode(next);setError('');setInfo('');};
-  const handleLogin=async()=>{setError('');setLoading(true);const{error:e}=await supabase.auth.signInWithPassword({email,password});if(e)setError(e.message);setLoading(false);};
-  const handleSignUp=async()=>{if(!agreeTerms){setError('Please agree to the terms.');return;}setError('');setLoading(true);const{data,error:e}=await supabase.auth.signUp({email,password});if(e){setError(e.message);setLoading(false);return;}if(data.user){const inviteCode=Math.random().toString(36).substring(2,10).toUpperCase();await supabase.from('profiles').insert({id:data.user.id,username,first_name:firstName,last_name:lastName,dob,invite_code:inviteCode,mood:'😊 Happy'});setInfo('Check your email to confirm your account! 💌');}setLoading(false);};
+  const switchMode=(next:'login'|'signup')=>{setMode(next);setError('');setInfo('');}; 
+
+  // ── Login handler ──────────────────────────────────────────
+  // Detects the "email not confirmed" error from Supabase and
+  // shows a friendly, branded message instead of raw API text.
+  const handleLogin = async () => {
+    setError('');
+    setLoading(true);
+
+    const { error: e } = await supabase.auth.signInWithPassword({ email, password });
+
+    if (e) {
+      // Supabase returns this specific message for unverified emails
+      const isUnverified =
+        e.message.toLowerCase().includes('email not confirmed') ||
+        e.message.toLowerCase().includes('email_not_confirmed');
+
+      if (isUnverified) {
+        setError(
+          '📬 Your email isn\'t verified yet. Please check your inbox (and spam folder) for a confirmation link before logging in. 💌'
+        );
+      } else {
+        setError(e.message);
+      }
+    }
+
+    setLoading(false);
+  };
+
+  // ── Sign-up handler ────────────────────────────────────────
+  // 1. Runs Zod validation (including 18+ age check) BEFORE
+  //    hitting Supabase. If invalid, shows an error and bails.
+  // 2. Only calls supabase.auth.signUp() when all fields pass.
+  // 3. Handles the "email not confirmed" scenario gracefully.
+  const handleSignUp = async () => {
+    setError('');
+
+    // — Step 1: Terms checkbox (unchanged guard) —
+    if (!agreeTerms) {
+      setError('Please agree to the Terms & Conditions to continue. 💝');
+      return;
+    }
+
+    // — Step 2: Zod client-side validation —
+    const parseResult = signUpSchema.safeParse({
+      username,
+      firstName,
+      lastName,
+      email,
+      password,
+      dob,
+    });
+
+    if (!parseResult.success) {
+      setError(firstZodError(parseResult.error));
+      return;                     // Stop here — do NOT call Supabase
+    }
+
+    // — Step 3: All good → call Supabase Auth —
+    setLoading(true);
+
+    const { data, error: e } = await supabase.auth.signUp({ email, password });
+
+    if (e) {
+      const isUnverified =
+        e.message.toLowerCase().includes('email not confirmed') ||
+        e.message.toLowerCase().includes('email_not_confirmed');
+
+      setError(
+        isUnverified
+          ? '📬 A confirmation email was already sent. Please verify it before signing in. 💌'
+          : e.message
+      );
+      setLoading(false);
+      return;
+    }
+
+    if (data.user) {
+      // — Step 4: Insert profile row (same as before) —
+      const inviteCode = Math.random().toString(36).substring(2, 10).toUpperCase();
+
+      await supabase.from('profiles').insert({
+        id:         data.user.id,
+        username,
+        first_name: firstName,
+        last_name:  lastName,
+        dob,
+        invite_code: inviteCode,
+        mood:        '😊 Happy',
+      });
+
+      setInfo('💌 Account created! Check your email to confirm your address before logging in.');
+    }
+
+    setLoading(false);
+  };
+
   const handleGoogle=async()=>{await supabase.auth.signInWithOAuth({provider:'google'});};
   const isSignIn=mode==='login';
   return (
@@ -117,18 +264,155 @@ function Auth() {
 function SettingsModal({profile,onClose}:{profile:Profile|null;onClose:()=>void}) {
   const navigate=useNavigate();
   const handleLogout=async()=>{await supabase.auth.signOut();navigate('/');onClose();};
+ 
   return (
     <div className="modal-overlay" onClick={onClose}>
-      <div className="glass-card cute-shadow rounded-[28px] w-full max-w-sm mx-4 p-7 modal-card" onClick={e=>e.stopPropagation()}>
-        <div className="text-center mb-6"><div className="text-5xl mb-2">⚙️</div><h2 className="text-2xl font-bold text-rose-600" style={{fontFamily:'var(--font-love)'}}>Settings</h2></div>
-        {profile&&(<div className="bg-rose-50 rounded-2xl p-4 mb-5 space-y-1"><p className="text-rose-700 font-bold text-lg">@{profile.username}</p><p className="text-rose-400 text-sm">{profile.first_name} {profile.last_name}</p>{profile.dob&&<p className="text-rose-300 text-xs">🎂 {new Date(profile.dob).toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'})}</p>}<div className="mt-2 pt-2 border-t border-rose-100"><p className="text-rose-400 text-xs">Invite Code</p><p className="font-digital text-rose-600 font-bold tracking-widest">{profile.invite_code}</p></div></div>)}
-        <button onClick={handleLogout} className="w-full py-3 rounded-full bg-gradient-to-r from-rose-500 to-pink-500 text-white font-bold shadow-lg hover:scale-[1.03] btn-press transition-all duration-200">🚪 Sign Out</button>
-        <button onClick={onClose} className="w-full mt-3 py-2 rounded-full border-2 border-rose-200 text-rose-400 text-sm font-semibold hover:border-rose-400 transition-colors">Cancel</button>
+      <div
+        className="w-full max-w-sm mx-4 modal-card"
+        style={{
+          background: 'linear-gradient(160deg, #fff9f9 0%, #fff0f2 100%)',
+          border: '1px solid rgba(244,63,94,0.12)',
+          borderRadius: '28px',
+          boxShadow: '0 24px 64px rgba(244,63,94,0.14), 0 4px 16px rgba(244,63,94,0.08)',
+          overflow: 'hidden',
+        }}
+        onClick={e=>e.stopPropagation()}
+      >
+ 
+        {/* ── Header band ── */}
+        <div style={{
+          background: 'linear-gradient(135deg, #8b2a3a 0%, #c9515f 100%)',
+          padding: '1.5rem 1.75rem 1.25rem',
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          gap: '0.4rem',
+        }}>
+          {/* Avatar circle */}
+          <div style={{
+            width: 56, height: 56, borderRadius: '50%',
+            background: 'rgba(255,255,255,0.18)',
+            border: '2px solid rgba(255,255,255,0.35)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            fontSize: '1.6rem', marginBottom: '0.2rem',
+          }}>
+            {profile?.first_name?.[0]?.toUpperCase() || '💗'}
+          </div>
+          <p style={{ fontFamily: 'var(--font-love)', fontSize: '1.3rem', color: '#fff', margin: 0, lineHeight: 1.2 }}>
+            {profile?.first_name || ''} {profile?.last_name || ''}
+          </p>
+          <p style={{ fontFamily: 'var(--font-main)', fontSize: '0.78rem', color: 'rgba(255,255,255,0.7)', margin: 0, letterSpacing: '0.04em' }}>
+            @{profile?.username || '—'}
+          </p>
+        </div>
+ 
+        {/* ── Profile info cards ── */}
+        {profile && (
+          <div style={{ padding: '1.1rem 1.5rem 0' }}>
+            <div style={{
+              background: 'rgba(244,63,94,0.05)',
+              border: '1px solid rgba(244,63,94,0.1)',
+              borderRadius: '14px',
+              padding: '0.85rem 1rem',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '0.55rem',
+            }}>
+ 
+              {/* DOB row */}
+              {profile.dob && (
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <span style={{ fontSize: '0.75rem', color: '#c9515f', fontWeight: 700, letterSpacing: '0.04em', display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                    🎂 Birthday
+                  </span>
+                  <span style={{ fontSize: '0.8rem', color: '#8b2a3a', fontWeight: 600 }}>
+                    {new Date(profile.dob).toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'})}
+                  </span>
+                </div>
+              )}
+ 
+              {/* Divider */}
+              <div style={{ height: '1px', background: 'rgba(244,63,94,0.1)' }}/>
+ 
+              {/* Invite code row */}
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <span style={{ fontSize: '0.75rem', color: '#c9515f', fontWeight: 700, letterSpacing: '0.04em', display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                  🔗 Invite Code
+                </span>
+                <span className="font-digital" style={{ fontSize: '0.88rem', color: '#8b2a3a', fontWeight: 700, letterSpacing: '0.12em' }}>
+                  {profile.invite_code}
+                </span>
+              </div>
+ 
+              {/* Mood row */}
+              <div style={{ height: '1px', background: 'rgba(244,63,94,0.1)' }}/>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <span style={{ fontSize: '0.75rem', color: '#c9515f', fontWeight: 700, letterSpacing: '0.04em' }}>
+                  ✨ Mood
+                </span>
+                <span style={{ fontSize: '0.8rem', color: '#8b2a3a', fontWeight: 600 }}>
+                  {profile.mood || '—'}
+                </span>
+              </div>
+ 
+            </div>
+          </div>
+        )}
+ 
+        {/* ── Action buttons ── */}
+        <div style={{ padding: '1.1rem 1.5rem 1.5rem', display: 'flex', flexDirection: 'column', gap: '0.65rem' }}>
+ 
+          {/* Visual separator with label */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', margin: '0.1rem 0' }}>
+            <div style={{ flex: 1, height: '1px', background: 'rgba(244,63,94,0.12)' }}/>
+            <span style={{ fontSize: '0.65rem', color: '#c9515f', fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase' }}>Account</span>
+            <div style={{ flex: 1, height: '1px', background: 'rgba(244,63,94,0.12)' }}/>
+          </div>
+ 
+          {/* Logout button */}
+          <button
+            onClick={handleLogout}
+            style={{
+              width: '100%', padding: '0.8rem',
+              borderRadius: '14px',
+              background: 'linear-gradient(135deg, #f43f5e 0%, #fb7185 100%)',
+              color: '#fff', border: 'none',
+              fontFamily: 'var(--font-main)', fontWeight: 700, fontSize: '0.92rem',
+              cursor: 'pointer', display: 'flex', alignItems: 'center',
+              justifyContent: 'center', gap: '0.5rem',
+              boxShadow: '0 4px 14px rgba(244,63,94,0.3)',
+              transition: 'transform 0.12s, box-shadow 0.18s',
+            }}
+            onMouseEnter={e=>{(e.currentTarget as HTMLButtonElement).style.transform='translateY(-1px)';(e.currentTarget as HTMLButtonElement).style.boxShadow='0 6px 20px rgba(244,63,94,0.4)';}}
+            onMouseLeave={e=>{(e.currentTarget as HTMLButtonElement).style.transform='translateY(0)';(e.currentTarget as HTMLButtonElement).style.boxShadow='0 4px 14px rgba(244,63,94,0.3)';}}
+          >
+            🚪 Sign Out
+          </button>
+ 
+          {/* Cancel button — visually distinct */}
+          <button
+            onClick={onClose}
+            style={{
+              width: '100%', padding: '0.7rem',
+              borderRadius: '14px',
+              background: 'transparent',
+              color: '#c9515f',
+              border: '1.5px solid rgba(244,63,94,0.25)',
+              fontFamily: 'var(--font-main)', fontWeight: 600, fontSize: '0.85rem',
+              cursor: 'pointer',
+              transition: 'background 0.18s, border-color 0.18s',
+            }}
+            onMouseEnter={e=>{(e.currentTarget as HTMLButtonElement).style.background='rgba(244,63,94,0.06)';(e.currentTarget as HTMLButtonElement).style.borderColor='rgba(244,63,94,0.4)';}}
+            onMouseLeave={e=>{(e.currentTarget as HTMLButtonElement).style.background='transparent';(e.currentTarget as HTMLButtonElement).style.borderColor='rgba(244,63,94,0.25)';}}
+          >
+            Stay Logged In 💗
+          </button>
+ 
+        </div>
       </div>
     </div>
   );
 }
-
 /* ============================================================
    DASHBOARD NAVBAR (unchanged logic, now with Profile & Game)
    ============================================================ */
@@ -805,6 +1089,82 @@ function CoupleMemoryGrid() {
     </section>
   );
 }
+// ============================================================
+// UnSync confirmation modal that appears when user clicks "Unsync".
+
+function BreakupModal({
+  partnerName,
+  onConfirm,
+  onCancel,
+  loading,
+}: {
+  partnerName: string;
+  onConfirm: () => void;
+  onCancel: () => void;
+  loading: boolean;
+}) {
+  return (
+    <div className="modal-overlay" onClick={onCancel}>
+      <div
+        className="glass-card cute-shadow rounded-[28px] w-full max-w-sm mx-4 p-7 modal-card"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Icon */}
+        <div className="text-center mb-5">
+          <div className="text-6xl mb-3" style={{ animation: 'heartPulse 1.5s ease infinite' }}>
+            💔
+          </div>
+          <h2
+            className="text-2xl font-bold text-rose-600 mb-1"
+            style={{ fontFamily: 'var(--font-love)' }}
+          >
+            Are you sure?
+          </h2>
+          <p className="text-rose-400 text-sm leading-relaxed">
+            This will unsync you and{' '}
+            <strong>{partnerName || 'your partner'}</strong> from HeartSync.
+          </p>
+        </div>
+
+        {/* Warning box */}
+        <div className="bg-rose-50 border border-rose-100 rounded-2xl p-4 mb-5 space-y-1.5 text-left">
+          <p className="text-rose-500 text-xs font-bold uppercase tracking-wider mb-2">
+            ⚠️ This will permanently:
+          </p>
+          <p className="text-rose-400 text-sm flex items-center gap-2">
+            <span>💔</span> Disconnect your partner link
+          </p>
+          <p className="text-rose-400 text-sm flex items-center gap-2">
+            <span>⏱️</span> Reset your shared timer to zero
+          </p>
+          <p className="text-rose-400 text-sm flex items-center gap-2">
+            <span>🔐</span> Remove access to each other's data
+          </p>
+          <p className="text-rose-300 text-xs mt-2 italic">
+            Your messages and bucket list items are kept privately.
+          </p>
+        </div>
+
+        {/* Buttons */}
+        <button
+          onClick={onConfirm}
+          disabled={loading}
+          className="w-full py-3 rounded-full bg-gradient-to-r from-rose-600 to-pink-700 text-white font-bold shadow-lg hover:scale-[1.02] btn-press transition-all duration-200 disabled:opacity-60 mb-3"
+        >
+          {loading ? '💔 Unsyncing...' : '💔 Yes, Unsync'}
+        </button>
+
+        <button
+          onClick={onCancel}
+          disabled={loading}
+          className="w-full py-2 rounded-full border-2 border-rose-200 text-rose-400 text-sm font-semibold hover:border-rose-400 transition-colors"
+        >
+          Cancel — Stay Together 💗
+        </button>
+      </div>
+    </div>
+  );
+}
 
 /* ============================================================
    DASHBOARD (main orchestrator)
@@ -818,9 +1178,58 @@ function Dashboard() {
   const [settingsOpen,setSettingsOpen]     = useState(false);
   const [hugReceived,setHugReceived]       = useState(false);
   const [userId,setUserId]                 = useState<string|null>(null);
-  const [showProfile,setShowProfile]       = useState(false);
-  const [showGame,setShowGame]             = useState(false);
+  // ============================================================
 
+  const [showProfile,   setShowProfile]   = useState(false);
+  const [showGame,      setShowGame]       = useState(false);
+  // ↓ NEW
+  const [showBreakup,   setShowBreakup]   = useState(false);
+  const [unsyncLoading, setUnsyncLoading] = useState(false);
+
+  // Unsync handler — clears partner_id and sync_start_date
+  // for BOTH users atomically, then marks the connection ended.
+  const handleUnsync = async () => {
+    if (!userId || !profile?.partner_id) return;
+    setUnsyncLoading(true);
+
+    const now = new Date().toISOString();
+
+    // Clear current user's partner link
+    await supabase
+      .from('profiles')
+      .update({
+        partner_id:       null,
+        sync_start_date:  null,
+        last_unsynced_at: now,
+        unsync_count:     (profile.unsync_count ?? 0) + 1,
+      })
+      .eq('id', userId);
+
+    // Clear partner's partner link
+    await supabase
+      .from('profiles')
+      .update({
+        partner_id:       null,
+        sync_start_date:  null,
+        last_unsynced_at: now,
+      })
+      .eq('id', profile.partner_id);
+
+    // Mark the connection record as ended (if connections table used)
+    await supabase
+      .from('connections')
+      .update({ status: 'ended' })
+      .or(`user_a_id.eq.${userId},user_b_id.eq.${userId}`)
+      .eq('status', 'active');
+
+    // Update local state so UI refreshes immediately
+    setProfile((prev) =>
+      prev ? { ...prev, partner_id: null, sync_start_date: null } : null
+    );
+    setPartnerProfile(null);
+    setUnsyncLoading(false);
+    setShowBreakup(false);
+  };
   useEffect(()=>{
     const init=async()=>{
       const{data:{session}}=await supabase.auth.getSession(); if(!session)return;
@@ -896,21 +1305,113 @@ function Dashboard() {
 
       <div className="db-page">
         <div className="db-content">
-          {/* Sync strip */}
-          {!profile?.partner_id?(
+           {/* ── Breakup confirmation modal ── */}
+          {showBreakup && (
+            <BreakupModal
+              partnerName={partnerProfile?.first_name || ''}
+              onConfirm={handleUnsync}
+              onCancel={() => setShowBreakup(false)}
+              loading={unsyncLoading}
+            />
+          )}
+
+          {/* ── Sync strip ── */}
+          {!profile?.partner_id ? (
+            // Not yet paired — show invite code + connect input
             <div className="db-sync-strip">
-              <span style={{fontSize:'1.1rem'}}>🔗</span>
-              <span style={{flex:1}}>Your invite code: <strong className="font-digital" style={{letterSpacing:'0.12em',color:'#fda4af'}}>{profile?.invite_code??'...'}</strong></span>
-              <input style={{background:'rgba(255,255,255,0.1)',border:'1px solid rgba(255,255,255,0.2)',borderRadius:'9999px',padding:'0.35rem 0.9rem',color:'#fff',fontSize:'0.8rem',outline:'none',width:'160px'}} placeholder="Partner's code..." value={partnerCode} onChange={e=>setPartnerCode(e.target.value)} onKeyDown={e=>e.key==='Enter'&&linkPartner()}/>
-              <button onClick={linkPartner} style={{background:'#c9515f',border:'none',borderRadius:'9999px',color:'#fff',padding:'0.35rem 1rem',fontWeight:700,fontSize:'0.8rem',cursor:'pointer'}}>Connect 💞</button>
+              <span style={{ fontSize: '1.1rem' }}>🔗</span>
+              <span style={{ flex: 1 }}>
+                Your invite code:{' '}
+                <strong
+                  className="font-digital"
+                  style={{ letterSpacing: '0.12em', color: '#fda4af' }}
+                >
+                  {profile?.invite_code ?? '...'}
+                </strong>
+              </span>
+              <input
+                style={{
+                  background: 'rgba(255,255,255,0.1)',
+                  border: '1px solid rgba(255,255,255,0.2)',
+                  borderRadius: '9999px',
+                  padding: '0.35rem 0.9rem',
+                  color: '#fff',
+                  fontSize: '0.8rem',
+                  outline: 'none',
+                  width: '160px',
+                }}
+                placeholder="Partner's code..."
+                value={partnerCode}
+                onChange={(e) => setPartnerCode(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && linkPartner()}
+              />
+              <button
+                onClick={linkPartner}
+                style={{
+                  background: '#c9515f',
+                  border: 'none',
+                  borderRadius: '9999px',
+                  color: '#fff',
+                  padding: '0.35rem 1rem',
+                  fontWeight: 700,
+                  fontSize: '0.8rem',
+                  cursor: 'pointer',
+                }}
+              >
+                Connect 💞
+              </button>
             </div>
-          ):(
-            <div className="db-sync-strip">
-              <span style={{fontSize:'1.2rem'}}>💑</span>
-              <span>Synced with <strong>{partnerProfile?.first_name||'your love'}</strong></span>
-              <span style={{marginLeft:'auto',opacity:0.7,fontSize:'0.8rem'}}>{partnerProfile?.mood||''}</span>
+          ) : (
+            // Paired — show partner info + unsync button
+            <div className="db-sync-strip" style={{ gap: '0.75rem' }}>
+              <span style={{ fontSize: '1.2rem' }}>💑</span>
+
+              <span style={{ flex: 1 }}>
+                Synced with{' '}
+                <strong>{partnerProfile?.first_name || 'your love'}</strong>
+              </span>
+
+              <span style={{ opacity: 0.7, fontSize: '0.8rem' }}>
+                {partnerProfile?.mood || ''}
+              </span>
+
+              {/* ← NEW: Unsync / Breakup button */}
+              <button
+                onClick={() => setShowBreakup(true)}
+                title="Unsync partner"
+                style={{
+                  background: 'rgba(244, 63, 94, 0.15)',
+                  border: '1px solid rgba(244, 63, 94, 0.35)',
+                  borderRadius: '9999px',
+                  color: '#fda4af',
+                  padding: '0.3rem 0.85rem',
+                  fontSize: '0.75rem',
+                  fontWeight: 700,
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '0.35rem',
+                  transition: 'background 0.2s, border-color 0.2s',
+                  flexShrink: 0,
+                }}
+                onMouseEnter={(e) => {
+                  (e.currentTarget as HTMLButtonElement).style.background =
+                    'rgba(244, 63, 94, 0.3)';
+                  (e.currentTarget as HTMLButtonElement).style.borderColor =
+                    'rgba(244, 63, 94, 0.7)';
+                }}
+                onMouseLeave={(e) => {
+                  (e.currentTarget as HTMLButtonElement).style.background =
+                    'rgba(244, 63, 94, 0.15)';
+                  (e.currentTarget as HTMLButtonElement).style.borderColor =
+                    'rgba(244, 63, 94, 0.35)';
+                }}
+              >
+                💔 Unsync
+              </button>
             </div>
           )}
+
 
           <div className="db-mid">
             <LiveTimer syncStart={profile?.sync_start_date??null}/>
@@ -919,33 +1420,120 @@ function Dashboard() {
           </div>
 
           <CoupleMemoryGrid/>
-         {/* ==========================================
-              DEVELOPER INFO FOOTER
-              ========================================== */}
-          <div className="mt-16 pb-8 w-full flex flex-col items-center justify-center text-sm text-[var(--db-text-soft)] opacity-80">
-            <p className="font-medium text-center">
-              Made with <span className="animate-pulse inline-block text-rose-500">💗</span> by Abhishek Shukla
-            </p>
-            
-            {/* Flex-col use kiya hai taaki GitHub aur Email alag lines par aayein */}
-            <div className="flex flex-col items-center gap-2 mt-3">
-              <a 
-                href="https://github.com/Absabhi0" 
-                target="_blank" 
-                rel="noopener noreferrer" 
-                className="hover:text-[var(--db-accent)] transition-colors font-medium flex items-center gap-1.5"
-              >
-                <GithubIcon size={16} />
-                GitHub
-              </a>
-              
-              <a 
-                href="mailto:abs.abhi188@gmail.com" 
-                className="hover:text-[var(--db-accent)] transition-colors font-medium flex items-center gap-1.5"
-              >
-                <Mail size={16} />
-                Email
-              </a>
+                   {/* ==========================================
+               DEVELOPER INFO FOOTER — FULL WIDTH SLIM
+               ========================================== */}
+          <div className="mt-10 pb-8 w-full">
+            <div
+              style={{
+                width: '100%',
+                background: 'linear-gradient(135deg, rgba(61,15,28,0.88) 0%, rgba(110,20,37,0.72) 100%)',
+                border: '1px solid rgba(245,198,198,0.18)',
+                borderRadius: '16px',
+                boxShadow: '0 6px 24px rgba(90,26,42,0.32), 0 1px 0 rgba(245,198,198,0.07) inset',
+                backdropFilter: 'blur(16px)',
+                padding: '0.75rem 1.75rem',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                gap: '1rem',
+                flexWrap: 'wrap',
+              }}
+            >
+              {/* Left — heart + name */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem', flexShrink: 0 }}>
+                <span style={{ fontSize: '1.1rem', animation: 'heartPulse 2s ease-in-out infinite', display: 'inline-block' }}>
+                  💗
+                </span>
+                <div>
+                  <p style={{ fontFamily: 'var(--font-love)', fontSize: '1rem', color: '#f5c6c6', margin: 0, lineHeight: 1.2 }}>
+                    Abhishek Shukla
+                  </p>
+                  <p style={{ fontFamily: 'var(--font-main)', fontSize: '0.68rem', color: 'rgba(245,198,198,0.45)', margin: 0, letterSpacing: '0.06em', textTransform: 'uppercase', fontWeight: 600 }}>
+                    Full-Stack Developer · HeartSync Creator
+                  </p>
+                </div>
+              </div>
+
+              {/* Center — tagline */}
+              <p style={{ fontFamily: 'var(--font-serif)', fontStyle: 'italic', fontSize: '0.78rem', color: 'rgba(245,198,198,0.38)', margin: 0, flex: 1, textAlign: 'center', whiteSpace: 'nowrap' }}>
+                Built with love, one commit at a time 🌹
+              </p>
+
+              {/* Right — GitHub + Email buttons */}
+              <div style={{ display: 'flex', gap: '0.6rem', alignItems: 'center', flexShrink: 0 }}>
+
+                <a
+                  href="https://github.com/Absabhi0"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: '0.4rem',
+                    padding: '0.4rem 1rem',
+                    borderRadius: '9999px',
+                    background: 'rgba(245,198,198,0.08)',
+                    border: '1.5px solid rgba(245,198,198,0.22)',
+                    color: '#f5c6c6',
+                    fontFamily: 'var(--font-main)',
+                    fontWeight: 700,
+                    fontSize: '0.78rem',
+                    textDecoration: 'none',
+                    letterSpacing: '0.03em',
+                    transition: 'background 0.2s, border-color 0.2s, transform 0.12s',
+                    whiteSpace: 'nowrap',
+                  }}
+                  onMouseEnter={(e) => {
+                    const el = e.currentTarget as HTMLAnchorElement;
+                    el.style.background  = 'rgba(245,198,198,0.18)';
+                    el.style.borderColor = 'rgba(245,198,198,0.5)';
+                    el.style.transform   = 'translateY(-1px)';
+                  }}
+                  onMouseLeave={(e) => {
+                    const el = e.currentTarget as HTMLAnchorElement;
+                    el.style.background  = 'rgba(245,198,198,0.08)';
+                    el.style.borderColor = 'rgba(245,198,198,0.22)';
+                    el.style.transform   = 'translateY(0)';
+                  }}
+                >
+                  <GithubIcon size={14} />
+                  GitHub
+                </a>
+
+                <a
+                  href="mailto:abs.abhi188@gmail.com"
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: '0.4rem',
+                    padding: '0.4rem 1rem',
+                    borderRadius: '9999px',
+                    background: 'rgba(201,81,95,0.15)',
+                    border: '1.5px solid rgba(201,81,95,0.35)',
+                    color: '#fda4af',
+                    fontFamily: 'var(--font-main)',
+                    fontWeight: 700,
+                    fontSize: '0.78rem',
+                    textDecoration: 'none',
+                    letterSpacing: '0.03em',
+                    transition: 'background 0.2s, border-color 0.2s, transform 0.12s',
+                    whiteSpace: 'nowrap',
+                  }}
+                  onMouseEnter={(e) => {
+                    const el = e.currentTarget as HTMLAnchorElement;
+                    el.style.background  = 'rgba(201,81,95,0.28)';
+                    el.style.borderColor = 'rgba(201,81,95,0.65)';
+                    el.style.transform   = 'translateY(-1px)';
+                  }}
+                  onMouseLeave={(e) => {
+                    const el = e.currentTarget as HTMLAnchorElement;
+                    el.style.background  = 'rgba(201,81,95,0.15)';
+                    el.style.borderColor = 'rgba(201,81,95,0.35)';
+                    el.style.transform   = 'translateY(0)';
+                  }}
+                >
+                  <Mail size={14} />
+                  Email
+                </a>
+
+              </div>
             </div>
           </div>
         </div>
