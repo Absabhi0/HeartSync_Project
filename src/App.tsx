@@ -11,6 +11,52 @@ const GithubIcon = ({ size = 16 }) => (
   </svg>
 );
 
+// ============================================================
+//   ZOD VALIDATION SCHEMAS —  (Input Sanitization)
+// ============================================================
+ 
+const signUpSchema = z.object({
+  email: z.string()
+    .min(1, 'Email is required')
+    .email('Please enter a valid email address'),
+ 
+  password: z.string()
+    .min(8, 'Password must be at least 8 characters')
+    .max(128, 'Password too long')
+    .regex(/[A-Z]/, 'Must contain at least one uppercase letter')
+    .regex(/[0-9]/, 'Must contain at least one number'),
+ 
+  username: z.string()
+    .min(3, 'Username must be at least 3 characters')
+    .max(30, 'Username cannot exceed 30 characters')
+    .regex(/^[a-zA-Z0-9_]+$/, 'Username: letters, numbers, and underscores only'),
+ 
+  firstName: z.string()
+    .min(1, 'First name is required')
+    .max(50, 'First name max 50 characters')
+    .regex(/^[a-zA-Z\s]+$/, 'First name: letters and spaces only'),
+ 
+  lastName: z.string()
+    .max(50, 'Last name max 50 characters')
+    .regex(/^[a-zA-Z\s]*$/, 'Last name: letters and spaces only'),
+ 
+  dob: z.string().refine((val) => {
+    if (!val) return false;
+    const birth = new Date(val);
+    const today = new Date();
+    let age = today.getFullYear() - birth.getFullYear();
+    const m = today.getMonth() - birth.getMonth();
+    if (m < 0 || (m === 0 && today.getDate() < birth.getDate())) age--;
+    return age >= 18;
+  }, 'You must be at least 18 years old to use HeartSync 💔'),
+});
+ 
+const chatMessageSchema = z.object({
+  content: z.string()
+    .min(1, 'Message cannot be empty')
+    .max(500, 'Message too long — max 500 characters 💌'),
+});
+ 
 /* ============================================================
    TYPES
    ============================================================ */
@@ -54,53 +100,7 @@ function Background() {
     </div>
   );
 }
-// sigup schema and helper function come next.\
- const signUpSchema = z.object({
-  username: z
-    .string()
-    .min(3, 'Username must be at least 3 characters')
-    .max(30, 'Username is too long')
-    .regex(/^[a-zA-Z0-9_]+$/, 'Username can only contain letters, numbers and _'),
 
-  firstName: z
-    .string()
-    .min(1, 'First name is required'),
-
-  lastName: z
-    .string()
-    .min(1, 'Last name is required'),
-
-  email: z
-    .string()
-    .email('Please enter a valid email address'),
-
-  password: z
-    .string()
-    .min(8, 'Password must be at least 8 characters'),
-
-  dob: z
-    .string()
-    .min(1, 'Date of birth is required')
-    .refine((val) => {
-      // Parse the date string and check the user is 18+
-      const birthDate  = new Date(val);
-      const today      = new Date();
-      const cutoff     = new Date(
-        today.getFullYear() - 18,
-        today.getMonth(),
-        today.getDate()
-      );
-      return birthDate <= cutoff;
-    }, {
-      message: "You must be 18 or older to join HeartSync 💔",
-    }),
-});
-
-// A helper that surfaces the first Zod error as a plain string.
-// Usage: const msg = firstZodError(result.error)
-function firstZodError(err: z.ZodError): string {
-  return err.issues[0]?.message ?? 'Validation error';
-}
 
 // --------------- end of schema block ---------------
 
@@ -108,156 +108,317 @@ function firstZodError(err: z.ZodError): string {
    AUTH (UNTOUCHED)
    ============================================================ */
 function Auth() {
-  const [mode,setMode]=useState<'login'|'signup'>('login');
-  const [email,setEmail]=useState(''); const [password,setPassword]=useState('');
-  const [username,setUsername]=useState(''); const [firstName,setFirstName]=useState('');
-  const [lastName,setLastName]=useState(''); const [dob,setDob]=useState('');
-  const [agreeTerms,setAgreeTerms]=useState(false);
-  const [loading,setLoading]=useState(false); const [error,setError]=useState(''); const [info,setInfo]=useState('');
-  const switchMode=(next:'login'|'signup')=>{setMode(next);setError('');setInfo('');}; 
-
-  // ── Login handler ──────────────────────────────────────────
-  // Detects the "email not confirmed" error from Supabase and
-  // shows a friendly, branded message instead of raw API text.
+  const [mode, setMode] = useState<'login' | 'signup'>('login');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [username, setUsername] = useState('');
+  const [firstName, setFirstName] = useState('');
+  const [lastName, setLastName] = useState('');
+  const [dob, setDob] = useState('');
+  const [agreeTerms, setAgreeTerms] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [info, setInfo] = useState('');
+ 
+  const switchMode = (next: 'login' | 'signup') => {
+    setMode(next);
+    setError('');
+    setInfo('');
+  };
+ 
   const handleLogin = async () => {
     setError('');
-    setLoading(true);
-
-    const { error: e } = await supabase.auth.signInWithPassword({ email, password });
-
-    if (e) {
-      // Supabase returns this specific message for unverified emails
-      const isUnverified =
-        e.message.toLowerCase().includes('email not confirmed') ||
-        e.message.toLowerCase().includes('email_not_confirmed');
-
-      if (isUnverified) {
-        setError(
-          '📬 Your email isn\'t verified yet. Please check your inbox (and spam folder) for a confirmation link before logging in. 💌'
-        );
-      } else {
-        setError(e.message);
-      }
-    }
-
-    setLoading(false);
-  };
-
-  // ── Sign-up handler ────────────────────────────────────────
-  // 1. Runs Zod validation (including 18+ age check) BEFORE
-  //    hitting Supabase. If invalid, shows an error and bails.
-  // 2. Only calls supabase.auth.signUp() when all fields pass.
-  // 3. Handles the "email not confirmed" scenario gracefully.
-  const handleSignUp = async () => {
-    setError('');
-
-    // — Step 1: Terms checkbox (unchanged guard) —
-    if (!agreeTerms) {
-      setError('Please agree to the Terms & Conditions to continue. 💝');
+    // Basic pre-check before hitting Supabase
+    if (!email.trim() || !password.trim()) {
+      setError('Please enter your email and password.');
       return;
     }
-
-    // — Step 2: Zod client-side validation —
-    const parseResult = signUpSchema.safeParse({
+    setLoading(true);
+    const { error: e } = await supabase.auth.signInWithPassword({ email, password });
+    if (e) setError(e.message);
+    setLoading(false);
+  };
+ 
+  // ← CHANGED: Full Zod validation before Supabase call
+  const handleSignUp = async () => {
+    setError('');
+    if (!agreeTerms) {
+      setError('Please agree to the Terms & Conditions to continue.');
+      return;
+    }
+ 
+    // Validate all fields with Zod schema
+    const validationResult = signUpSchema.safeParse({
+      email,
+      password,
       username,
       firstName,
       lastName,
-      email,
-      password,
       dob,
     });
-
-    if (!parseResult.success) {
-      setError(firstZodError(parseResult.error));
-      return;                     // Stop here — do NOT call Supabase
+ 
+    if (!validationResult.success) {
+      // Show the first validation error to the user
+      const firstIssue = validationResult.error.issues[0];
+      setError(firstIssue?.message ?? 'Please check your inputs.');
+      return;
     }
-
-    // — Step 3: All good → call Supabase Auth —
+ 
     setLoading(true);
-
     const { data, error: e } = await supabase.auth.signUp({ email, password });
-
     if (e) {
-      const isUnverified =
-        e.message.toLowerCase().includes('email not confirmed') ||
-        e.message.toLowerCase().includes('email_not_confirmed');
-
-      setError(
-        isUnverified
-          ? '📬 A confirmation email was already sent. Please verify it before signing in. 💌'
-          : e.message
-      );
+      setError(e.message);
       setLoading(false);
       return;
     }
-
     if (data.user) {
-      // — Step 4: Insert profile row (same as before) —
       const inviteCode = Math.random().toString(36).substring(2, 10).toUpperCase();
-
       await supabase.from('profiles').insert({
-        id:         data.user.id,
+        id: data.user.id,
         username,
         first_name: firstName,
-        last_name:  lastName,
+        last_name: lastName,
         dob,
         invite_code: inviteCode,
-        mood:        '😊 Happy',
+        mood: 'Happy',
       });
-
-      setInfo('💌 Account created! Check your email to confirm your address before logging in.');
+      setInfo('Check your email to confirm your account! 💌');
     }
-
     setLoading(false);
   };
-
-  const handleGoogle=async()=>{await supabase.auth.signInWithOAuth({provider:'google'});};
-  const isSignIn=mode==='login';
+ 
+  const handleGoogle = async () => {
+    await supabase.auth.signInWithOAuth({ provider: 'google' });
+  };
+ 
+  const isSignIn = mode === 'login';
+ 
   return (
     <div className="auth-page">
-      {Array.from({length:10},(_,i)=>(
-        <div key={i} style={{position:'absolute',left:`${(i*9.5+4)%96}%`,bottom:0,fontSize:'1rem',opacity:0,pointerEvents:'none',animation:`floatUp ${7+(i*0.8)%7}s ${(i*0.7)%5}s linear infinite`}}>🌸</div>
+      {/* Floating petals background */}
+      {Array.from({ length: 10 }, (_, i) => (
+        <div
+          key={i}
+          style={{
+            position: 'absolute',
+            left: `${(i * 9.5 + 4) % 96}%`,
+            bottom: 0,
+            fontSize: '1rem',
+            opacity: 0,
+            pointerEvents: 'none',
+            animation: `floatUp ${7 + (i * 0.8) % 7}s ${(i * 0.7) % 5}s linear infinite`,
+          }}
+        >
+          🌸
+        </div>
       ))}
+ 
       <div className="auth-card">
-        <div className={`auth-panel auth-panel--signin ${!isSignIn?'covered mobile-hidden':''}`}>
+ 
+        {/* ─── SIGN IN PANEL ──────────────────────────────── */}
+        <div className={`auth-panel auth-panel--signin ${!isSignIn ? 'covered mobile-hidden' : ''}`}>
           <div className="auth-logo shimmer-text">HeartSync</div>
           <p className="auth-subtitle">Welcome back, love 💕</p>
+ 
           <div className="w-full space-y-3">
-            <input className="input-love" type="email" placeholder="Email 📧" value={email} onChange={e=>setEmail(e.target.value)}/>
-            <input className="input-love" type="password" placeholder="Password 🔒" value={password} onChange={e=>setPassword(e.target.value)} onKeyDown={e=>e.key==='Enter'&&handleLogin()}/>
+            <input
+              className="input-love"
+              type="email"
+              placeholder="Email 📧"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+            />
+            <input
+              className="input-love"
+              type="password"
+              placeholder="Password 🔒"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && handleLogin()}
+            />
           </div>
-          {error&&isSignIn&&<p className="text-red-400 text-xs mt-2 text-center animate-pulse">{error}</p>}
-          {info&&isSignIn&&<p className="text-green-500 text-xs mt-2 text-center">{info}</p>}
-          <button onClick={handleLogin} disabled={loading} className="w-full mt-4 py-2.5 rounded-full bg-gradient-to-r from-rose-500 to-pink-500 text-white font-bold text-sm shadow-lg hover:scale-[1.03] btn-press transition-all duration-200 disabled:opacity-60">{loading?'✨ Loading...':'💗 Sign In'}</button>
-          <div className="flex items-center gap-3 my-3 w-full"><div className="flex-1 h-px bg-rose-100"/><span className="text-rose-300 text-xs">or</span><div className="flex-1 h-px bg-rose-100"/></div>
-          <button onClick={handleGoogle} className="w-full py-2.5 rounded-full border-2 border-rose-200 bg-white text-rose-600 font-semibold text-sm flex items-center justify-center gap-2 hover:border-rose-400 hover:bg-rose-50 btn-press transition-all duration-200">
-            <svg className="w-4 h-4" viewBox="0 0 48 48"><path fill="#EA4335" d="M24 9.5c3.3 0 6.1 1.1 8.4 3.3l6.3-6.3C34.7 2.8 29.7.5 24 .5 14.7.5 6.9 6.1 3.3 14l7.4 5.8C12.5 13.2 17.8 9.5 24 9.5z"/><path fill="#4285F4" d="M46.5 24.5c0-1.6-.1-3.1-.4-4.5H24v8.5h12.7c-.6 3-2.3 5.5-4.8 7.2l7.4 5.8c4.3-4 6.8-9.9 7.2-17z"/><path fill="#FBBC05" d="M10.7 28.2A14.5 14.5 0 0 1 9.5 24c0-1.5.3-2.9.7-4.2L2.8 14C1 17.1 0 20.4 0 24s1 6.9 2.8 10l7.9-5.8z"/><path fill="#34A853" d="M24 47.5c5.7 0 10.5-1.9 14-5.1l-7.4-5.8c-2 1.4-4.6 2.2-6.6 2.2-6.2 0-11.5-3.7-13.3-9.1L2.8 34c3.6 7.9 11.4 13.5 21.2 13.5z"/></svg>
+ 
+          {error && isSignIn && (
+            <p className="text-red-400 text-xs mt-2 text-center animate-pulse">{error}</p>
+          )}
+          {info && isSignIn && (
+            <p className="text-green-500 text-xs mt-2 text-center">{info}</p>
+          )}
+ 
+          <button
+            onClick={handleLogin}
+            disabled={loading}
+            className="w-full mt-4 py-2.5 rounded-full bg-gradient-to-r from-rose-500 to-pink-500 text-white font-bold text-sm shadow-lg hover:scale-[1.03] btn-press transition-all duration-200 disabled:opacity-60"
+          >
+            {loading ? '✨ Loading...' : '💗 Sign In'}
+          </button>
+ 
+          <div className="flex items-center gap-3 my-3 w-full">
+            <div className="flex-1 h-px bg-rose-100" />
+            <span className="text-rose-300 text-xs">or</span>
+            <div className="flex-1 h-px bg-rose-100" />
+          </div>
+ 
+          <button
+            onClick={handleGoogle}
+            className="w-full py-2.5 rounded-full border-2 border-rose-200 bg-white text-rose-600 font-semibold text-sm flex items-center justify-center gap-2 hover:border-rose-400 hover:bg-rose-50 btn-press transition-all duration-200"
+          >
+            <svg className="w-4 h-4" viewBox="0 0 48 48">
+              <path fill="#EA4335" d="M24 9.5c3.3 0 6.1 1.1 8.4 3.3l6.3-6.3C34.7 2.8 29.7.5 24 .5 14.7.5 6.9 6.1 3.3 14l7.4 5.8C12.5 13.2 17.8 9.5 24 9.5z" />
+              <path fill="#4285F4" d="M46.5 24.5c0-1.6-.1-3.1-.4-4.5H24v8.5h12.7c-.6 3-2.3 5.5-4.8 7.2l7.4 5.8c4.3-4 6.8-9.9 7.2-17z" />
+              <path fill="#FBBC05" d="M10.7 28.2A14.5 14.5 0 0 1 9.5 24c0-1.5.3-2.9.7-4.2L2.8 14C1 17.1 0 20.4 0 24s1 6.9 2.8 10l7.9-5.8z" />
+              <path fill="#34A853" d="M24 47.5c5.7 0 10.5-1.9 14-5.1l-7.4-5.8c-2 1.4-4.6 2.2-6.6 2.2-6.2 0-11.5-3.7-13.3-9.1L2.8 34c3.6 7.9 11.4 13.5 21.2 13.5z" />
+            </svg>
             Google
           </button>
+ 
+          {/* ← CHANGED: Mobile-only toggle — visible when overlay is hidden on small screens */}
+          {/* On desktop this is a secondary option alongside the animated overlay */}
+          <p className="text-center mt-4 text-xs" style={{ color: '#9b6a70' }}>
+            New to HeartSync?{' '}
+            <button
+              onClick={() => switchMode('signup')}
+              style={{
+                fontWeight: 700,
+                color: '#f43f5e',
+                background: 'none',
+                border: 'none',
+                cursor: 'pointer',
+                fontSize: '0.75rem',
+                textDecoration: 'underline',
+                textDecorationColor: '#fda4af',
+              }}
+            >
+              Create Account 🌹
+            </button>
+          </p>
         </div>
-        <div className={`auth-panel auth-panel--signup ${isSignIn?'covered mobile-hidden':''}`}>
+ 
+        {/* ─── SIGN UP PANEL ──────────────────────────────── */}
+        <div className={`auth-panel auth-panel--signup ${isSignIn ? 'covered mobile-hidden' : ''}`}>
           <div className="auth-logo shimmer-text">HeartSync</div>
           <p className="auth-subtitle">Start your love story 🌹</p>
+ 
           <div className="w-full space-y-2.5">
-            <input className="input-love" placeholder="Username 💌" value={username} onChange={e=>setUsername(e.target.value)}/>
-            <div className="flex gap-2"><input className="input-love" placeholder="First Name" value={firstName} onChange={e=>setFirstName(e.target.value)}/><input className="input-love" placeholder="Last Name" value={lastName} onChange={e=>setLastName(e.target.value)}/></div>
-            <input className="input-love" type="date" value={dob} onChange={e=>setDob(e.target.value)}/>
-            <input className="input-love" type="email" placeholder="Email 📧" value={email} onChange={e=>setEmail(e.target.value)}/>
-            <input className="input-love" type="password" placeholder="Password 🔒" value={password} onChange={e=>setPassword(e.target.value)}/>
-            <label className="flex items-center gap-2 text-rose-400 text-xs cursor-pointer pl-1"><input type="checkbox" checked={agreeTerms} onChange={e=>setAgreeTerms(e.target.checked)} className="accent-rose-500"/>I agree to the Terms &amp; Conditions 💝</label>
+            <input
+              className="input-love"
+              placeholder="Username 💌"
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
+            />
+            <div className="flex gap-2">
+              <input
+                className="input-love"
+                placeholder="First Name"
+                value={firstName}
+                onChange={(e) => setFirstName(e.target.value)}
+              />
+              <input
+                className="input-love"
+                placeholder="Last Name"
+                value={lastName}
+                onChange={(e) => setLastName(e.target.value)}
+              />
+            </div>
+            <input
+              className="input-love"
+              type="date"
+              value={dob}
+              onChange={(e) => setDob(e.target.value)}
+            />
+            <input
+              className="input-love"
+              type="email"
+              placeholder="Email 📧"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+            />
+            <input
+              className="input-love"
+              type="password"
+              placeholder="Password 🔒 (min 8 chars, 1 uppercase, 1 number)"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+            />
+            <label className="flex items-center gap-2 text-rose-400 text-xs cursor-pointer pl-1">
+              <input
+                type="checkbox"
+                checked={agreeTerms}
+                onChange={(e) => setAgreeTerms(e.target.checked)}
+                className="accent-rose-500"
+              />
+              I agree to the Terms &amp; Conditions 💝
+            </label>
           </div>
-          {error&&!isSignIn&&<p className="text-red-400 text-xs mt-2 text-center animate-pulse">{error}</p>}
-          {info&&!isSignIn&&<p className="text-green-500 text-xs mt-2 text-center">{info}</p>}
-          <button onClick={handleSignUp} disabled={loading} className="w-full mt-3 py-2.5 rounded-full bg-gradient-to-r from-rose-500 to-pink-500 text-white font-bold text-sm shadow-lg hover:scale-[1.03] btn-press transition-all duration-200 disabled:opacity-60">{loading?'✨ Loading...':'🌹 Create Account'}</button>
+ 
+          {/* ← CHANGED: Error and info shown below fields, not after button */}
+          {error && !isSignIn && (
+            <p className="text-red-400 text-xs mt-2 text-center animate-pulse w-full">{error}</p>
+          )}
+          {info && !isSignIn && (
+            <p className="text-green-500 text-xs mt-2 text-center w-full">{info}</p>
+          )}
+ 
+          {/* ← CHANGED: Sign Up button is always visible — was missing/unreachable on some layouts */}
+          <button
+            onClick={handleSignUp}
+            disabled={loading}
+            className="w-full mt-3 py-2.5 rounded-full bg-gradient-to-r from-rose-500 to-pink-500 text-white font-bold text-sm shadow-lg hover:scale-[1.03] btn-press transition-all duration-200 disabled:opacity-60"
+          >
+            {loading ? '✨ Loading...' : '🌹 Create Account'}
+          </button>
+ 
+          {/* ← CHANGED: Mobile toggle link — lets user return to Sign In on small screens */}
+          <p className="text-center mt-3 text-xs" style={{ color: '#9b6a70' }}>
+            Already synced?{' '}
+            <button
+              onClick={() => switchMode('login')}
+              style={{
+                fontWeight: 700,
+                color: '#f43f5e',
+                background: 'none',
+                border: 'none',
+                cursor: 'pointer',
+                fontSize: '0.75rem',
+                textDecoration: 'underline',
+                textDecorationColor: '#fda4af',
+              }}
+            >
+              Sign In 💗
+            </button>
+          </p>
         </div>
-        <div className={`auth-overlay ${mode==='signup'?'overlay-left':''}`}>
-          {mode==='login'?(<><span className="auth-overlay-heart">💗</span><p className="auth-overlay-title">Hello, Friend!</p><p className="auth-overlay-text">Start your journey with us and find your perfect sync 🌹</p><button className="auth-overlay-btn" onClick={()=>switchMode('signup')}>Sign Up</button></>):(<><span className="auth-overlay-heart">💕</span><p className="auth-overlay-title">Welcome Back!</p><p className="auth-overlay-text">Please login to your account to continue your love story 💌</p><button className="auth-overlay-btn" onClick={()=>switchMode('login')}>Sign In</button></>)}
+ 
+        {/* ─── OVERLAY (desktop only — hidden on mobile via CSS) ─── */}
+        <div className={`auth-overlay ${mode === 'signup' ? 'overlay-left' : ''}`}>
+          {mode === 'login' ? (
+            <>
+              <span className="auth-overlay-heart">💗</span>
+              <p className="auth-overlay-title">Hello, Friend!</p>
+              <p className="auth-overlay-text">
+                Start your journey with us and find your perfect sync 🌹
+              </p>
+              <button className="auth-overlay-btn" onClick={() => switchMode('signup')}>
+                Sign Up
+              </button>
+            </>
+          ) : (
+            <>
+              <span className="auth-overlay-heart">💕</span>
+              <p className="auth-overlay-title">Welcome Back!</p>
+              <p className="auth-overlay-text">
+                Please login to your account to continue your love story 💌
+              </p>
+              <button className="auth-overlay-btn" onClick={() => switchMode('login')}>
+                Sign In
+              </button>
+            </>
+          )}
         </div>
       </div>
     </div>
   );
 }
-
 /* ============================================================
    SETTINGS MODAL (UNTOUCHED)
    ============================================================ */
@@ -600,6 +761,7 @@ function ChatUI({initialProfile}:{initialProfile:Profile|null}) {
   const [showGiftModal,setShowGiftModal] = useState(false);
   const [giftText,setGiftText]       = useState('');
   const [giftTime,setGiftTime]       = useState('');
+  const [msgError, setMsgError]          = useState('');
   const bottomRef   = useRef<HTMLDivElement>(null);
   const typingTimer = useRef<ReturnType<typeof setTimeout>|null>(null);
 
@@ -645,11 +807,26 @@ function ChatUI({initialProfile}:{initialProfile:Profile|null}) {
     await supabase.channel('typing_events').send({type:'broadcast',event:'typing',payload:{sender:userId}});
   },[userId]);
 
-  const sendMessage=async(content?:string,isGift=false,giftTs?:string)=>{
-    const text=(content||newMsg).trim(); if(!text||!userId)return;
-    setNewMsg('');
-    await supabase.from('messages').insert({content:text,sender_id:userId,...(isGift?{is_gift:true,gift_time:giftTs}:{})});
-  };
+  const sendMessage = async (content?: string, isGift = false, giftTs?: string) => {
+  const text = (content || newMsg).trim();
+ 
+  // ← NEW: Validate with Zod before touching Supabase
+  const validation = chatMessageSchema.safeParse({ content: text });
+  if (!validation.success) {
+    const msg = validation.error.issues[0]?.message ?? 'Invalid message';
+    setMsgError(msg);
+    return;
+  }
+ 
+  setMsgError(''); // clear any previous error
+  if (!userId) return;
+  setNewMsg('');
+  await supabase.from('messages').insert({
+    content: text,
+    sender_id: userId,
+    ...(isGift ? { is_gift: true, gift_time: giftTs } : {}),
+  });
+};
 
   const sendGift=()=>{
     if(!giftText.trim())return;
@@ -757,30 +934,83 @@ function ChatUI({initialProfile}:{initialProfile:Profile|null}) {
           </div>
 
           {/* Input bar */}
-          <div className="chat-inputbar">
-            {isRecording?(
-              <div className="voice-recording" style={{flex:1}}>
-                🔴 Recording... <button onClick={toggleVoice} style={{background:'none',border:'none',cursor:'pointer',color:'#be185d',fontWeight:700,marginLeft:'auto'}}>Stop</button>
-              </div>
-            ):(
-              <input
-                className="chat-input-field"
-                placeholder="Say something sweet... 💌"
-                value={newMsg}
-                onChange={e=>{setNewMsg(e.target.value);broadcastTyping();}}
-                onKeyDown={e=>e.key==='Enter'&&sendMessage()}
-              />
-            )}
-            <button className="chat-action-btn chat-voice-btn" title="Voice message" onClick={toggleVoice}>
-              {isRecording?'⏹':'🎤'}
-            </button>
-            <button className="chat-action-btn chat-gift-btn" title="Schedule gift message" onClick={()=>setShowGiftModal(true)}>
-              🎁
-            </button>
-            <button className="chat-action-btn chat-send-btn" disabled={!newMsg.trim()&&!isRecording} onClick={()=>sendMessage()}>
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" width="16" height="16"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
-            </button>
-          </div>
+          <div>
+  { /* Character counter + error row */ }
+  {(newMsg.length > 0 || msgError) && (
+    <div
+      style={{
+        display: 'flex',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        padding: '0.2rem 1.1rem 0',
+        background: '#fff',
+        borderTop: '1px solid rgba(160,60,80,0.08)',
+      }}
+    >
+      {msgError ? (
+        <span style={{ fontSize: '0.7rem', color: '#ef4444', fontWeight: 600 }}>
+          ⚠️ {msgError}
+        </span>
+      ) : (
+        <span />
+      )}
+      <span
+        style={{
+          fontSize: '0.68rem',
+          color: newMsg.length > 480 ? '#ef4444' : '#9b6a70',
+          fontWeight: newMsg.length > 480 ? 700 : 400,
+        }}
+      >
+        {newMsg.length} / 500
+      </span>
+    </div>
+  )}
+ 
+  <div className="chat-inputbar">
+    {isRecording ? (
+      <div className="voice-recording" style={{ flex: 1 }}>
+        🔴 Recording...{' '}
+        <button
+          onClick={toggleVoice}
+          style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#be185d', fontWeight: 700, marginLeft: 'auto' }}
+        >
+          Stop
+        </button>
+      </div>
+    ) : (
+      <input
+        className="chat-input-field"
+        placeholder="Say something sweet... 💌"
+        value={newMsg}
+        maxLength={500}
+        style={msgError ? { borderColor: '#ef4444', boxShadow: '0 0 0 3px rgba(239,68,68,0.12)' } : {}}
+        onChange={(e) => {
+          setNewMsg(e.target.value);
+          if (msgError) setMsgError(''); // clear error as user types
+          broadcastTyping();
+        }}
+        onKeyDown={(e) => e.key === 'Enter' && sendMessage()}
+      />
+    )}
+    <button className="chat-action-btn chat-voice-btn" title="Voice message" onClick={toggleVoice}>
+      {isRecording ? '⏹' : '🎤'}
+    </button>
+    <button className="chat-action-btn chat-gift-btn" title="Schedule gift message" onClick={() => setShowGiftModal(true)}>
+      🎁
+    </button>
+    <button
+      className="chat-action-btn chat-send-btn"
+      disabled={!newMsg.trim() && !isRecording}
+      onClick={() => sendMessage()}
+    >
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" width="16" height="16">
+        <line x1="22" y1="2" x2="11" y2="13" />
+        <polygon points="22 2 15 22 11 13 2 9 22 2" />
+      </svg>
+    </button>
+  </div>
+</div>
+
         </div>
       </div>
     </>
@@ -1017,24 +1247,72 @@ function LiveTimer({syncStart}:{syncStart:string|null}) {
   );
 }
 
-function MoodCard({profile,userId,onMoodChange}:{profile:Profile|null;userId:string|null;onMoodChange:(m:string)=>void}) {
-  const moods=Object.keys(MOOD_SHAYRI);
-  const currentMood=profile?.mood?.split(' ').slice(1).join(' ')||'Romantic';
-  const shayriKey=moods.find(k=>currentMood.toLowerCase().includes(k.toLowerCase()))||moods[0];
-  const shayri=MOOD_SHAYRI[shayriKey]||MOOD_SHAYRI[moods[0]];
-  const handleChange=async(e:React.ChangeEvent<HTMLSelectElement>)=>{const val=e.target.value;onMoodChange(val);if(!userId)return;await supabase.from('profiles').update({mood:val}).eq('id',userId);};
+const MOOD_EMOJIS: Record<string, string> = {
+  Romantic: '💗',
+  Happy:    '😊',
+  Missing:  '🥺',
+  Lovey:    '🥰',
+  Excited:  '🎉',
+  Content:  '😌',
+  Sleepy:   '😴',
+  Grumpy:   '😤',
+};
+ 
+function MoodCard({
+  profile,
+  userId,
+  onMoodChange,
+}: {
+  profile: Profile | null;
+  userId: string | null;
+  onMoodChange: (m: string) => void;
+}) {
+  const moods = Object.keys(MOOD_SHAYRI); // ['Romantic','Happy','Missing',...]
+ 
+  // ← CHANGED: Fixed mood extraction
+  // Handles both stored formats: "Happy" (key) OR "😊 Happy" (legacy emoji-prefix)
+  const rawMood = profile?.mood || 'Romantic';
+  const shayriKey =
+    moods.find((k) => rawMood.toLowerCase().includes(k.toLowerCase())) || moods[0];
+ 
+  const shayri = MOOD_SHAYRI[shayriKey] || MOOD_SHAYRI[moods[0]];
+ 
+  const handleChange = async (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const val = e.target.value; // e.g. "Happy"
+    onMoodChange(val);          // update local state in Dashboard
+    if (!userId) return;
+    await supabase.from('profiles').update({ mood: val }).eq('id', userId);
+  };
+ 
   return (
     <div className="db-card">
       <h2 className="db-card-title">Mood</h2>
-      <div className="db-card-divider"><span className="db-card-divider-heart">♥</span></div>
+      <div className="db-card-divider">
+        <span className="db-card-divider-heart">♥</span>
+      </div>
+ 
+      {/* ← CHANGED: value now uses shayriKey directly (no more split/slice logic) */}
       <div className="db-mood-select-wrap">
-        <span className="db-mood-select-icon">♥</span>
-        <select className="db-mood-select" style={{paddingLeft:'2rem'}} value={shayriKey} onChange={handleChange}>
-          {moods.map(m=><option key={m} value={m}>{m}</option>)}
+        <span className="db-mood-select-icon">
+          {MOOD_EMOJIS[shayriKey] || '♥'}
+        </span>
+        <select
+          className="db-mood-select"
+          style={{ paddingLeft: '2rem' }}
+          value={shayriKey}          // ← CHANGED: bind to shayriKey, not a re-derived value
+          onChange={handleChange}
+        >
+          {/* ← CHANGED: Options show emoji + label for better UX */}
+          {moods.map((m) => (
+            <option key={m} value={m}>
+              {MOOD_EMOJIS[m]} {m}
+            </option>
+          ))}
         </select>
         <span className="db-mood-select-arrow">▾</span>
       </div>
-      <div className="db-shayri" style={{flex:1}}>
+ 
+      <div className="db-shayri" style={{ flex: 1 }}>
         <span className="db-shayri-open">"</span>
         <p className="db-shayri-quote">{shayri}</p>
         <span className="db-shayri-close">"</span>

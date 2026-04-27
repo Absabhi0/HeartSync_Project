@@ -1009,3 +1009,191 @@ body {
   .profile-body { padding: 60px 0.75rem 2rem; }
   .chat-column { max-width: 100%; }
 }
+
+/* Tablet range (600px–900px): prevent overlay from crushing content */
+@media (min-width: 600px) and (max-width: 900px) {
+  .auth-card {
+    max-width: 680px;
+    min-height: 520px;
+  }
+  .auth-panel {
+    padding: 2rem 1.75rem;
+  }
+  .auth-overlay {
+    border-radius: 20px;
+  }
+  .auth-overlay-title {
+    font-size: 1.4rem;
+  }
+  .auth-overlay-text {
+    font-size: 0.78rem;
+  }
+}
+ 
+/* Extra-small phones (< 380px): tighten spacing */
+@media (max-width: 380px) {
+  .auth-panel {
+    padding: 1.5rem 1.1rem;
+  }
+  .auth-logo {
+    font-size: 1.65rem;
+  }
+  .auth-card {
+    border-radius: 18px;
+  }
+  .input-love {
+    padding: 0.5rem 1rem;
+    font-size: 0.82rem;
+  }
+}
+ 
+/* Prevent horizontal scroll on small screens */
+@media (max-width: 599px) {
+  .auth-page {
+    padding: 0.5rem;
+    align-items: flex-start;
+    padding-top: 2rem;
+    overflow-y: auto;
+  }
+  .auth-card {
+    width: 100%;
+    max-width: 100%;
+  }
+}
+ 
+ 
+/* ====================================================
+   RESPONSIVE FIX: Dashboard — Tablet range
+   ==================================================== */
+ 
+@media (min-width: 600px) and (max-width: 900px) {
+  .db-mid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  /* Third card goes full width on tablet */
+  .db-mid > *:nth-child(3) {
+    grid-column: 1 / -1;
+  }
+}
+ 
+ 
+/* ====================================================
+   RESPONSIVE FIX: Chat — Common screen sizes
+   ==================================================== */
+ 
+/* 1080p and above: constrain chat column width */
+@media (min-width: 1440px) {
+  .chat-column {
+    max-width: 700px;
+    border-radius: 0 16px 16px 0;
+    box-shadow: 8px 0 32px rgba(0, 0, 0, 0.25);
+  }
+  .chat-page {
+    align-items: center;
+  }
+}
+ 
+/* iPhone SE / small Android (< 380px) */
+@media (max-width: 380px) {
+  .chat-bubble {
+    font-size: 0.82rem;
+    padding: 0.55rem 0.75rem;
+  }
+  .chat-input-field {
+    font-size: 0.82rem;
+    padding: 0.5rem 0.9rem;
+  }
+  .chat-topbar {
+    padding: 0.6rem 0.75rem;
+  }
+}
+ 
+ 
+/* ====================================================
+   RESPONSIVE FIX: Profile Page
+   ==================================================== */
+ 
+@media (min-width: 900px) {
+  .profile-body {
+    padding-top: 70px;
+  }
+  .profile-cover {
+    height: 260px;
+  }
+  .profile-avatar-wrap {
+    bottom: -56px;
+    width: 112px;
+    height: 112px;
+  }
+}
+ 
+ 
+/* ====================================================
+   RESPONSIVE FIX: Game Page
+   ==================================================== */
+ 
+@media (min-width: 900px) {
+  .game-content {
+    max-width: 860px;
+  }
+  .game-score-btns {
+    flex-direction: row;
+    gap: 0.75rem;
+  }
+}
+ 
+@media (min-width: 1200px) {
+  .db-memory-grid {
+    grid-template-columns: repeat(4, 1fr);
+  }
+}
+ 
+ 
+/* ====================================================
+   FIX: Mood dropdown — ensure it's always interactive
+   Prevents the select from being visually hidden by
+   the select-icon overlay on some browsers
+   ==================================================== */
+ 
+.db-mood-select {
+  /* Ensure full click area, icon is decorative only */
+  position: relative;
+  z-index: 1;
+  cursor: pointer;
+}
+ 
+.db-mood-select-icon {
+  /* Ensure icon never intercepts pointer events */
+  pointer-events: none;
+  z-index: 2;
+}
+ 
+/* Webkit (Chrome/Safari) custom select arrow consistency */
+@supports (-webkit-appearance: none) {
+  .db-mood-select {
+    -webkit-appearance: none;
+    appearance: none;
+  }
+}
+ 
+ 
+/* ====================================================
+   IMPROVEMENT: Smooth page transitions
+   ==================================================== */
+ 
+.profile-page,
+.game-page,
+.chat-page {
+  animation: pageSlideIn 0.28s cubic-bezier(0.22, 1, 0.36, 1);
+}
+ 
+@keyframes pageSlideIn {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
